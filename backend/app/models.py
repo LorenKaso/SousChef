@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -49,6 +50,7 @@ class Timer(BaseModel):
     seconds: int
     label: str
     step_index: int
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Session(BaseModel):
@@ -56,6 +58,8 @@ class Session(BaseModel):
     recipe_id: str
     current_step: int = 1
     active_timers: list[Timer] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ActionType(str, Enum):
