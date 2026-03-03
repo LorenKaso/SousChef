@@ -1,7 +1,6 @@
 from __future__ import annotations
-
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
-
 from .api import router
 from .models import Ingredient, Recipe, Step
 from .store import store
@@ -34,6 +33,11 @@ def seed_sample_recipe() -> None:
     store.add_recipe(recipe)
 
 
-@app.on_event("startup")
-def on_startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     seed_sample_recipe()
+    yield
+
+
+app = FastAPI(title="SousChef Backend", version="0.1.0", lifespan=lifespan)
+app.include_router(router)
