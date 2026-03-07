@@ -45,6 +45,31 @@ class ConvertRecipeResponse(BaseModel):
     items: list[ConvertedIngredient]
 
 
+class ConversionTargetSystem(str, Enum):
+    METRIC = "metric"
+    VOLUME = "volume"
+
+
+class ConvertRecipeRequest(BaseModel):
+    target_system: ConversionTargetSystem
+
+
+class NormalizedConvertedIngredient(BaseModel):
+    name: str
+    display_name: str | None = None
+    original_amount: float
+    original_unit: str
+    resolved_ingredient_key: str | None = None
+    target_amount: float
+    target_unit: str
+    source: str | None = None
+
+
+class ConvertRecipeNormalizedResponse(BaseModel):
+    recipe_id: str
+    items: list[NormalizedConvertedIngredient]
+
+
 class Timer(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     seconds: int

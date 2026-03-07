@@ -4,8 +4,16 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 
-from .models import AskRequest, AskResponse, ConvertRecipeResponse, Recipe, Session, StartSessionRequest
-from .services.convert import convert_recipe
+from .models import (
+    AskRequest,
+    AskResponse,
+    ConvertRecipeNormalizedResponse,
+    ConvertRecipeRequest,
+    Recipe,
+    Session,
+    StartSessionRequest,
+)
+from .services.convert import convert_recipe_normalized
 from .services.orchestrator import process_ask
 from .store import store
 
@@ -36,12 +44,15 @@ def get_recipe(recipe_id: str) -> Recipe:
     return recipe
 
 
-@router.post("/recipes/{recipe_id}/convert", response_model=ConvertRecipeResponse)
-def convert_recipe_endpoint(recipe_id: str) -> ConvertRecipeResponse:
+@router.post("/recipes/{recipe_id}/convert", response_model=ConvertRecipeNormalizedResponse)
+def convert_recipe_endpoint(
+    recipe_id: str,
+    payload: ConvertRecipeRequest,
+) -> ConvertRecipeNormalizedResponse:
     recipe = store.get_recipe(recipe_id)
     if recipe is None:
         raise HTTPException(status_code=404, detail="Recipe not found")
-    return convert_recipe(recipe)
+    return convert_recipe_normalized(recipe, payload.target_system)
 
 
 @router.post("/session/start", response_model=Session)

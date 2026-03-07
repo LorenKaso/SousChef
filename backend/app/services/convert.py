@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..models import ConvertRecipeResponse, ConvertedIngredient, Recipe
+from ..models import (
+    ConversionTargetSystem,
+    ConvertRecipeNormalizedResponse,
+    ConvertRecipeResponse,
+    ConvertedIngredient,
+    NormalizedConvertedIngredient,
+    Recipe,
+)
 from .conversion_catalog import catalog
 
 def _volume_units_ml() -> dict[str, float]:
@@ -99,6 +106,55 @@ def _normalize_for_volume(item: ConvertedIngredient) -> ConvertedIngredient:
         cups=item.cups,
         tbsp=item.tbsp,
         tsp=item.tsp,
+    )
+
+
+def _pick_volume_target_unit(item: ConvertedIngredient) -> tuple[float, str] | None:
+    if item.cups is not None and item.cups >= 1:
+        return (item.cups, "cup")
+    if item.tbsp is not None and item.tbsp >= 1:
+        return (item.tbsp, "tbsp")
+    if item.tsp is not None:
+        return (item.tsp, "tsp")
+    return None
+
+
+def _to_normalized_item(
+    item: ConvertedIngredient,
+    target_system: ConversionTargetSystem,
+) -> NormalizedConvertedIngredient:
+    ingredient_key = catalog.get_ingredient_key(item.name)
+    display_name = catalog.get_display_name(ingredient_key) if ingredient_key is not None else None
+
+    target_amount = item.original_amount
+    target_unit = item.original_unit
+    source = item.source
+
+    if target_system == ConversionTargetSystem.METRIC:
+        if _is_liquid_ingredient(item.name) and item.ml is not None:
+            target_amount = item.ml
+            target_unit = "ml"
+        elif item.grams is not None:
+            target_amount = item.grams
+            target_unit = "g"
+        else:
+            source = source or "original"
+    else:
+        picked_volume = _pick_volume_target_unit(item)
+        if picked_volume is not None:
+            target_amount, target_unit = picked_volume
+        else:
+            source = source or "original"
+
+    return NormalizedConvertedIngredient(
+        name=item.name,
+        display_name=display_name,
+        original_amount=item.original_amount,
+        original_unit=item.original_unit,
+        resolved_ingredient_key=ingredient_key,
+        target_amount=target_amount,
+        target_unit=target_unit,
+        source=source,
     )
 
 
@@ -209,3 +265,12 @@ def convert_recipe(recipe: Recipe, target_system: str | None = None) -> ConvertR
         items = [_normalize_for_volume(item) for item in items]
 
     return ConvertRecipeResponse(recipe_id=recipe.id, items=items)
+
+
+def convert_recipe_normalized(
+    recipe: Recipe,
+    target_system: ConversionTargetSystem,
+) -> ConvertRecipeNormalizedResponse:
+    converted = convert_recipe(recipe, target_system=target_system.value)
+    items = [_to_normalized_item(item, target_system) for item in converted.items]
+    return ConvertRecipeNormalizedResponse(recipe_id=recipe.id, items=items)
