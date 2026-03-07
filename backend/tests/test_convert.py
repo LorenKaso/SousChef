@@ -1,7 +1,8 @@
 from fastapi.testclient import TestClient
 
 from app.main import app, seed_sample_recipe
-from app.services.convert import convert_ingredient
+from app.models import Ingredient, Recipe
+from app.services.convert import convert_ingredient, convert_recipe
 from app.store import store
 
 
@@ -145,3 +146,112 @@ def test_unknown_ingredient_does_not_crash() -> None:
     assert result.original_amount == 1
     assert result.original_unit == "cup"
     assert result.grams is None
+
+
+def test_convert_recipe_returns_item_for_each_ingredient() -> None:
+    recipe = Recipe(
+        id="recipe-123",
+        title="Simple Cake",
+        servings=4,
+        ingredients=[
+            Ingredient(name="flour", amount=1, unit="cup"),
+            Ingredient(name="sugar", amount=2, unit="tbsp"),
+            Ingredient(name="egg", amount=2, unit="unit"),
+        ],
+        steps=[],
+    )
+
+    result = convert_recipe(recipe)
+
+    assert result.recipe_id == recipe.id
+    assert len(result.items) == 3
+
+
+def test_convert_recipe_preserves_non_convertible_ingredient() -> None:
+    recipe = Recipe(
+        id="recipe-egg-safe",
+        title="Egg Safe Fallback",
+        servings=2,
+        ingredients=[
+            Ingredient(name="flour", amount=1, unit="cup"),
+            Ingredient(name="egg", amount=2, unit="unit"),
+        ],
+        steps=[],
+    )
+
+    result = convert_recipe(recipe)
+    egg_item = next((item for item in result.items if item.name == "egg"), None)
+
+    assert egg_item is not None
+    assert egg_item.original_amount == 2
+    assert egg_item.original_unit == "unit"
+    assert egg_item.grams is None
+
+
+def test_convert_recipe_metric_normalizes_all_safe_ingredients() -> None:
+    recipe = Recipe(
+        id="recipe-metric-normalize",
+        title="Metric Normalization",
+        servings=4,
+        ingredients=[
+            Ingredient(name="flour", amount=1, unit="cup"),
+            Ingredient(name="sugar", amount=2, unit="tbsp"),
+            Ingredient(name="milk", amount=1, unit="cup"),
+            Ingredient(name="egg", amount=2, unit="unit"),
+        ],
+        steps=[],
+    )
+
+    # TDD note: once supported, call convert_recipe(..., target_system="metric").
+    result = convert_recipe(recipe)
+
+    assert len(result.items) == 4
+
+    flour_item = next(item for item in result.items if item.name == "flour")
+    sugar_item = next(item for item in result.items if item.name == "sugar")
+    milk_item = next(item for item in result.items if item.name == "milk")
+    egg_item = next(item for item in result.items if item.name == "egg")
+
+    assert flour_item.grams is not None
+    assert sugar_item.grams is not None
+    assert milk_item.ml is not None
+
+    assert egg_item.original_amount == 2
+    assert egg_item.original_unit == "unit"
+    assert egg_item.grams is None
+    assert egg_item.ml is None
+
+
+def test_convert_recipe_volume_normalizes_all_safe_ingredients() -> None:
+    recipe = Recipe(
+        id="recipe-volume-normalize",
+        title="Volume Normalization",
+        servings=4,
+        ingredients=[
+            Ingredient(name="flour", amount=140, unit="g"),
+            Ingredient(name="sugar", amount=24, unit="g"),
+            Ingredient(name="milk", amount=240, unit="ml"),
+            Ingredient(name="egg", amount=2, unit="unit"),
+        ],
+        steps=[],
+    )
+
+    # TDD note: once supported, call convert_recipe(..., target_system="volume").
+    result = convert_recipe(recipe)
+
+    assert len(result.items) == 4
+
+    flour_item = next(item for item in result.items if item.name == "flour")
+    sugar_item = next(item for item in result.items if item.name == "sugar")
+    milk_item = next(item for item in result.items if item.name == "milk")
+    egg_item = next(item for item in result.items if item.name == "egg")
+
+    assert flour_item.cups is not None
+    assert sugar_item.cups is not None or sugar_item.tbsp is not None or sugar_item.tsp is not None
+    assert milk_item.cups is not None
+
+    assert egg_item.original_amount == 2
+    assert egg_item.original_unit == "unit"
+    assert egg_item.cups is None
+    assert egg_item.tbsp is None
+    assert egg_item.tsp is None
