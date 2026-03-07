@@ -1,0 +1,693 @@
+{
+  "meta": {
+    "name": "recipe_conversions_bilingual",
+    "version": "0.2.0",
+    "description": "Bilingual Hebrew-English recipe conversion data for backend use.",
+    "volume_units_ml": {
+      "cup": 240,
+      "tbsp": 15,
+      "tsp": 5
+    },
+    "aliases_units": {
+      "he": {
+        "כוס": "cup",
+        "כפות": "tbsp",
+        "כף": "tbsp",
+        "כפיות": "tsp",
+        "כפית": "tsp",
+        "מ\"ל": "ml",
+        "גרם": "g",
+        "גרמים": "g",
+        "שקית": "packet",
+        "שקיק": "packet",
+        "עלה": "leaf",
+        "יחידה": "unit",
+        "קובייה": "cube",
+        "קובית": "cube",
+        "סטיק": "stick"
+      },
+      "en": {
+        "cup": "cup",
+        "cups": "cup",
+        "tbsp": "tbsp",
+        "tablespoon": "tbsp",
+        "tablespoons": "tbsp",
+        "tsp": "tsp",
+        "teaspoon": "tsp",
+        "teaspoons": "tsp",
+        "ml": "ml",
+        "milliliter": "ml",
+        "milliliters": "ml",
+        "g": "g",
+        "gram": "g",
+        "grams": "g",
+        "packet": "packet",
+        "packets": "packet",
+        "leaf": "leaf",
+        "leaves": "leaf",
+        "unit": "unit",
+        "units": "unit",
+        "cube": "cube",
+        "stick": "stick"
+      }
+    },
+    "notes": [
+      "Some source values conflicted; preserved common kitchen values and explicit source text where useful.",
+      "Use canonical key for code, Hebrew and English display names for UI/search."
+    ]
+  },
+  "ingredients": {
+    "white_flour": {
+      "display_name_he": "קמח לבן",
+      "display_name_en": "white flour",
+      "aliases_he": [
+        "קמח",
+        "קמח לבן",
+        "קמח רגיל",
+        "קמח תופח"
+      ],
+      "aliases_en": [
+        "flour",
+        "white flour",
+        "all-purpose flour",
+        "self-rising flour"
+      ],
+      "grams_per_unit": {
+        "cup": 140,
+        "tbsp": 10,
+        "tsp": 3
+      }
+    },
+    "whole_wheat_flour": {
+      "display_name_he": "קמח מלא",
+      "display_name_en": "whole wheat flour",
+      "aliases_he": [
+        "קמח מלא"
+      ],
+      "aliases_en": [
+        "whole wheat flour"
+      ],
+      "grams_per_unit": {
+        "cup": 125,
+        "tbsp": 8
+      }
+    },
+    "white_sugar": {
+      "display_name_he": "סוכר לבן",
+      "display_name_en": "white sugar",
+      "aliases_he": [
+        "סוכר",
+        "סוכר לבן"
+      ],
+      "aliases_en": [
+        "sugar",
+        "white sugar"
+      ],
+      "grams_per_unit": {
+        "cup": 200,
+        "tbsp": 12,
+        "tsp": 5
+      }
+    },
+    "brown_sugar_packed": {
+      "display_name_he": "סוכר חום דחוס",
+      "display_name_en": "packed brown sugar",
+      "aliases_he": [
+        "סוכר חום",
+        "סוכר חום דחוס"
+      ],
+      "aliases_en": [
+        "brown sugar",
+        "packed brown sugar"
+      ],
+      "grams_per_unit": {
+        "cup": 240,
+        "tbsp": 15,
+        "tsp": 7
+      }
+    },
+    "baking_powder": {
+      "display_name_he": "אבקת אפייה",
+      "display_name_en": "baking powder",
+      "aliases_he": [
+        "אבקת אפייה"
+      ],
+      "aliases_en": [
+        "baking powder"
+      ],
+      "grams_per_unit": {
+        "packet": 10,
+        "tbsp": 8,
+        "tsp": 3
+      }
+    },
+    "powdered_sugar": {
+      "display_name_he": "אבקת סוכר",
+      "display_name_en": "powdered sugar",
+      "aliases_he": [
+        "אבקת סוכר"
+      ],
+      "aliases_en": [
+        "powdered sugar",
+        "icing sugar",
+        "confectioners sugar"
+      ],
+      "grams_per_unit": {
+        "cup": 120,
+        "tbsp": 10,
+        "tsp": 3
+      }
+    },
+    "chopped_nuts": {
+      "display_name_he": "אגוזים/שקדים קצוצים",
+      "display_name_en": "chopped nuts/almonds",
+      "aliases_he": [
+        "אגוזים קצוצים",
+        "שקדים קצוצים"
+      ],
+      "aliases_en": [
+        "chopped nuts",
+        "chopped almonds"
+      ],
+      "grams_per_unit": {
+        "cup": 100,
+        "tbsp": 6
+      }
+    },
+    "ground_nuts": {
+      "display_name_he": "אגוזים/שקדים טחונים",
+      "display_name_en": "ground nuts/almonds",
+      "aliases_he": [
+        "אגוזים טחונים",
+        "שקדים טחונים",
+        "קמח שקדים"
+      ],
+      "aliases_en": [
+        "ground nuts",
+        "ground almonds",
+        "almond flour"
+      ],
+      "grams_per_unit": {
+        "cup": 100
+      }
+    },
+    "long_grain_rice": {
+      "display_name_he": "אורז ארוך",
+      "display_name_en": "long grain rice",
+      "aliases_he": [
+        "אורז ארוך"
+      ],
+      "aliases_en": [
+        "long grain rice"
+      ],
+      "grams_per_unit": {
+        "cup": 200
+      }
+    },
+    "short_grain_rice": {
+      "display_name_he": "אורז קצר",
+      "display_name_en": "short grain rice",
+      "aliases_he": [
+        "אורז קצר"
+      ],
+      "aliases_en": [
+        "short grain rice"
+      ],
+      "grams_per_unit": {
+        "cup": 210
+      }
+    },
+    "salt": {
+      "display_name_he": "מלח",
+      "display_name_en": "salt",
+      "aliases_he": [
+        "מלח"
+      ],
+      "aliases_en": [
+        "salt"
+      ],
+      "grams_per_unit": {
+        "cup": 250,
+        "tbsp": 18,
+        "tsp": 6
+      }
+    },
+    "baking_soda": {
+      "display_name_he": "סודה לשתייה",
+      "display_name_en": "baking soda",
+      "aliases_he": [
+        "סודה לשתייה"
+      ],
+      "aliases_en": [
+        "baking soda"
+      ],
+      "grams_per_unit": {
+        "packet": 10,
+        "tbsp": 10,
+        "tsp": 3
+      }
+    },
+    "vanilla_sugar": {
+      "display_name_he": "סוכר וניל",
+      "display_name_en": "vanilla sugar",
+      "aliases_he": [
+        "סוכר וניל"
+      ],
+      "aliases_en": [
+        "vanilla sugar"
+      ],
+      "grams_per_unit": {
+        "cup": 140,
+        "tbsp": 10,
+        "tsp": 3,
+        "packet": 10
+      }
+    },
+    "dry_breadcrumbs": {
+      "display_name_he": "פירורי לחם יבשים",
+      "display_name_en": "dry breadcrumbs",
+      "aliases_he": [
+        "פירורי לחם",
+        "פירורי לחם יבשים"
+      ],
+      "aliases_en": [
+        "breadcrumbs",
+        "dry breadcrumbs"
+      ],
+      "grams_per_unit": {
+        "cup": 125,
+        "tbsp": 10
+      }
+    },
+    "chopped_dried_fruit": {
+      "display_name_he": "פירות יבשים קצוצים",
+      "display_name_en": "chopped dried fruit",
+      "aliases_he": [
+        "פירות יבשים קצוצים"
+      ],
+      "aliases_en": [
+        "chopped dried fruit"
+      ],
+      "grams_per_unit": {
+        "cup": 150
+      }
+    },
+    "cookie_crumbs": {
+      "display_name_he": "פירורי עוגיות/ביסקוויטים",
+      "display_name_en": "cookie crumbs",
+      "aliases_he": [
+        "פירורי עוגיות",
+        "פירורי ביסקוויטים"
+      ],
+      "aliases_en": [
+        "cookie crumbs",
+        "biscuit crumbs"
+      ],
+      "grams_per_unit": {
+        "cup": 110
+      }
+    },
+    "ground_poppy": {
+      "display_name_he": "פרג טחון",
+      "display_name_en": "ground poppy seeds",
+      "aliases_he": [
+        "פרג טחון"
+      ],
+      "aliases_en": [
+        "ground poppy",
+        "ground poppy seeds"
+      ],
+      "grams_per_unit": {
+        "cup": 70
+      }
+    },
+    "coconut": {
+      "display_name_he": "קוקוס",
+      "display_name_en": "coconut",
+      "aliases_he": [
+        "קוקוס",
+        "קוקוס טחון"
+      ],
+      "aliases_en": [
+        "coconut",
+        "desiccated coconut"
+      ],
+      "grams_per_unit": {
+        "cup": 100,
+        "tbsp": 12,
+        "tsp": 5
+      }
+    },
+    "cornstarch": {
+      "display_name_he": "קורנפלור",
+      "display_name_en": "cornstarch",
+      "aliases_he": [
+        "קורנפלור"
+      ],
+      "aliases_en": [
+        "cornstarch"
+      ],
+      "grams_per_unit": {
+        "cup": 140,
+        "tbsp": 10
+      }
+    },
+    "cocoa": {
+      "display_name_he": "קקאו",
+      "display_name_en": "cocoa",
+      "aliases_he": [
+        "קקאו"
+      ],
+      "aliases_en": [
+        "cocoa",
+        "cocoa powder"
+      ],
+      "grams_per_unit": {
+        "cup": 140,
+        "tbsp": 10
+      }
+    },
+    "dry_yeast": {
+      "display_name_he": "שמרים יבשים",
+      "display_name_en": "dry yeast",
+      "aliases_he": [
+        "שמרים יבשים",
+        "שמרים"
+      ],
+      "aliases_en": [
+        "dry yeast",
+        "yeast"
+      ],
+      "grams_per_unit": {
+        "tbsp": 10
+      }
+    },
+    "fresh_yeast": {
+      "display_name_he": "שמרים טריים",
+      "display_name_en": "fresh yeast",
+      "aliases_he": [
+        "שמרים טריים",
+        "קוביית שמרים",
+        "שקית שמרית"
+      ],
+      "aliases_en": [
+        "fresh yeast",
+        "yeast cube"
+      ],
+      "grams_per_unit": {
+        "cube": 50,
+        "packet": 50
+      }
+    },
+    "butter": {
+      "display_name_he": "חמאה",
+      "display_name_en": "butter",
+      "aliases_he": [
+        "חמאה"
+      ],
+      "aliases_en": [
+        "butter"
+      ],
+      "grams_per_unit": {
+        "cup": 230,
+        "tbsp": 15,
+        "stick": 113
+      }
+    },
+    "oil": {
+      "display_name_he": "שמן",
+      "display_name_en": "oil",
+      "aliases_he": [
+        "שמן"
+      ],
+      "aliases_en": [
+        "oil"
+      ],
+      "grams_per_unit": {
+        "cup": 200
+      },
+      "ml_per_grams_examples": {
+        "100_ml": 90
+      }
+    },
+    "water": {
+      "display_name_he": "מים",
+      "display_name_en": "water",
+      "aliases_he": [
+        "מים"
+      ],
+      "aliases_en": [
+        "water"
+      ],
+      "ml_equals_grams": true,
+      "grams_per_unit": {
+        "cup": 240,
+        "tbsp": 15
+      }
+    },
+    "lemon_juice": {
+      "display_name_he": "מיץ לימון",
+      "display_name_en": "lemon juice",
+      "aliases_he": [
+        "מיץ לימון"
+      ],
+      "aliases_en": [
+        "lemon juice"
+      ],
+      "ml_equals_grams": true
+    },
+    "orange_juice": {
+      "display_name_he": "מיץ תפוזים",
+      "display_name_en": "orange juice",
+      "aliases_he": [
+        "מיץ תפוזים"
+      ],
+      "aliases_en": [
+        "orange juice"
+      ],
+      "ml_equals_grams": true
+    },
+    "milk": {
+      "display_name_he": "חלב",
+      "display_name_en": "milk",
+      "aliases_he": [
+        "חלב"
+      ],
+      "aliases_en": [
+        "milk"
+      ],
+      "ml_equals_grams": true
+    },
+    "heavy_cream": {
+      "display_name_he": "שמנת מתוקה",
+      "display_name_en": "heavy cream",
+      "aliases_he": [
+        "שמנת מתוקה"
+      ],
+      "aliases_en": [
+        "heavy cream",
+        "whipping cream"
+      ],
+      "ml_equals_grams": true
+    },
+    "vinegar": {
+      "display_name_he": "חומץ",
+      "display_name_en": "vinegar",
+      "aliases_he": [
+        "חומץ"
+      ],
+      "aliases_en": [
+        "vinegar"
+      ],
+      "ml_equals_grams": true
+    },
+    "honey_or_silan": {
+      "display_name_he": "דבש או סילאן",
+      "display_name_en": "honey or silan",
+      "aliases_he": [
+        "דבש",
+        "סילאן"
+      ],
+      "aliases_en": [
+        "honey",
+        "silan",
+        "date syrup",
+        "maple syrup"
+      ],
+      "grams_per_unit": {
+        "cup": 320,
+        "tbsp": 22,
+        "tsp": 10
+      }
+    },
+    "jam": {
+      "display_name_he": "ריבה",
+      "display_name_en": "jam",
+      "aliases_he": [
+        "ריבה"
+      ],
+      "aliases_en": [
+        "jam"
+      ],
+      "grams_per_unit": {
+        "cup": 320,
+        "tbsp": 20,
+        "tsp": 10
+      }
+    },
+    "gelatin_powder": {
+      "display_name_he": "אבקת ג'לטין",
+      "display_name_en": "gelatin powder",
+      "aliases_he": [
+        "ג'לטין",
+        "אבקת ג'לטין"
+      ],
+      "aliases_en": [
+        "gelatin",
+        "gelatin powder"
+      ],
+      "grams_per_unit": {
+        "packet": 14,
+        "tbsp": 10,
+        "leaf": 4
+      },
+      "special": {
+        "grams_to_water_ml_ratio": 5
+      }
+    },
+    "egg_white": {
+      "display_name_he": "חלבון ביצה",
+      "display_name_en": "egg white",
+      "aliases_he": [
+        "חלבון",
+        "חלבון ביצה"
+      ],
+      "aliases_en": [
+        "egg white"
+      ],
+      "grams_per_unit": {
+        "unit": 40
+      }
+    },
+    "egg_yolk": {
+      "display_name_he": "חלמון ביצה",
+      "display_name_en": "egg yolk",
+      "aliases_he": [
+        "חלמון",
+        "חלמון ביצה"
+      ],
+      "aliases_en": [
+        "egg yolk"
+      ],
+      "grams_per_unit": {
+        "unit": 20
+      }
+    },
+    "raisins": {
+      "display_name_he": "צימוקים",
+      "display_name_en": "raisins",
+      "aliases_he": [
+        "צימוקים"
+      ],
+      "aliases_en": [
+        "raisins"
+      ],
+      "grams_per_unit": {
+        "cup": 140
+      }
+    },
+    "peanut_butter": {
+      "display_name_he": "חמאת בוטנים",
+      "display_name_en": "peanut butter",
+      "aliases_he": [
+        "חמאת בוטנים"
+      ],
+      "aliases_en": [
+        "peanut butter"
+      ],
+      "grams_per_unit": {
+        "cup": 280
+      }
+    },
+    "chocolate_chips": {
+      "display_name_he": "שוקולד צ'יפס",
+      "display_name_en": "chocolate chips",
+      "aliases_he": [
+        "שוקולד צ'יפס"
+      ],
+      "aliases_en": [
+        "chocolate chips"
+      ],
+      "grams_per_unit": {
+        "cup": 200
+      }
+    },
+    "oats": {
+      "display_name_he": "שיבולת שועל",
+      "display_name_en": "oats",
+      "aliases_he": [
+        "שיבולת שועל"
+      ],
+      "aliases_en": [
+        "oats",
+        "rolled oats"
+      ],
+      "grams_per_unit": {
+        "cup": 100
+      }
+    }
+  },
+  "special_rules": {
+    "dry_yeast_to_fresh_yeast_ratio": 3,
+    "butter_to_oil_ratio_by_weight": 0.85,
+    "self_rising_flour": {
+      "he": {
+        "cup": "1 כוס קמח תופח = 1 כוס קמח רגיל + 1 כפית אבקת אפייה",
+        "kg": "1 ק\"ג קמח תופח = 1 ק\"ג קמח רגיל + 2 שקיות אבקת אפייה"
+      },
+      "en": {
+        "cup": "1 cup self-rising flour = 1 cup regular flour + 1 tsp baking powder",
+        "kg": "1 kg self-rising flour = 1 kg regular flour + 2 baking powder packets"
+      }
+    }
+  },
+  "temperature": {
+    "c_to_f_table": {
+      "105": 225,
+      "120": 250,
+      "135": 275,
+      "150": 300,
+      "160": 325,
+      "175": 350,
+      "180": 356,
+      "190": 375,
+      "205": 400,
+      "220": 425,
+      "230": 450,
+      "245": 475
+    },
+    "formula": {
+      "c_to_f": "F = C * 9 / 5 + 32",
+      "f_to_c": "C = (F - 32) * 5 / 9"
+    }
+  },
+  "pan_size": {
+    "round_pan_examples": {
+      "22_to_24": 1.2,
+      "22_to_26": 1.4,
+      "22_to_28": 1.6,
+      "26_to_24": 0.85,
+      "26_to_22": 0.7,
+      "28_to_22": 0.6
+    },
+    "formula_he": "מחלקים את קוטר התבנית החדשה בקוטר התבנית הישנה, ואת התוצאה מעלים בריבוע.",
+    "formula_en": "Divide the new pan diameter by the original pan diameter, then square the result."
+  },
+  "common_products": {
+    "heavy_cream_container_ml": 250,
+    "yogurt_container_ml": 200,
+    "sour_cream_container_ml": 200,
+    "white_cheese_or_cottage_g": 250,
+    "small_packet_g": 10
+  }
+}
