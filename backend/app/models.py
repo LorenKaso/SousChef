@@ -64,6 +64,7 @@ class Session(BaseModel):
 
 class ActionType(str, Enum):
     START_TIMER = "START_TIMER"
+    TIMER_FINISHED = "TIMER_FINISHED"
     NEXT_STEP = "NEXT_STEP"
     PREV_STEP = "PREV_STEP"
     HIGHLIGHT_INGREDIENT = "HIGHLIGHT_INGREDIENT"

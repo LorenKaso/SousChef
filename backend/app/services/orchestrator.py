@@ -36,7 +36,7 @@ def _detect_lang(text: str) -> str:
 
 
 def format_duration(seconds: int, lang: str) -> str:
-    seconds = max(0, seconds)
+    seconds = max(0,int(seconds))
 
     if seconds < 60:
         if lang == "he":
