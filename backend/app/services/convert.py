@@ -32,6 +32,76 @@ def _grams_per_unit(ingredient_data: dict[str, Any] | None) -> dict[str, float]:
     return result
 
 
+def _is_liquid_ingredient(name: str) -> bool:
+    ingredient_key = catalog.get_ingredient_key(name)
+    if ingredient_key is None:
+        return False
+    ingredient_data = catalog.get_ingredient_data(ingredient_key)
+    return isinstance(ingredient_data, dict) and ingredient_data.get("ml_equals_grams") is True
+
+
+def _with_overrides(
+    item: ConvertedIngredient,
+    *,
+    ml: float | None,
+    grams: float | None,
+    cups: float | None,
+    tbsp: float | None,
+    tsp: float | None,
+) -> ConvertedIngredient:
+    return ConvertedIngredient(
+        name=item.name,
+        original_amount=item.original_amount,
+        original_unit=item.original_unit,
+        ml=ml,
+        grams=grams,
+        cups=cups,
+        tbsp=tbsp,
+        tsp=tsp,
+        source=item.source,
+    )
+
+
+def _normalize_for_metric(item: ConvertedIngredient) -> ConvertedIngredient:
+    # Keep graceful fallback unchanged for non-convertible cases.
+    if all(value is None for value in (item.ml, item.grams, item.cups, item.tbsp, item.tsp)):
+        return item
+
+    if _is_liquid_ingredient(item.name):
+        return _with_overrides(
+            item,
+            ml=item.ml,
+            grams=None,
+            cups=None,
+            tbsp=None,
+            tsp=None,
+        )
+
+    return _with_overrides(
+        item,
+        ml=None,
+        grams=item.grams,
+        cups=None,
+        tbsp=None,
+        tsp=None,
+    )
+
+
+def _normalize_for_volume(item: ConvertedIngredient) -> ConvertedIngredient:
+    # Keep graceful fallback unchanged for non-convertible cases.
+    if all(value is None for value in (item.ml, item.grams, item.cups, item.tbsp, item.tsp)):
+        return item
+
+    return _with_overrides(
+        item,
+        ml=None,
+        grams=None,
+        cups=item.cups,
+        tbsp=item.tbsp,
+        tsp=item.tsp,
+    )
+
+
 def convert_ingredient(name: str, amount: float, unit: str) -> ConvertedIngredient:
     ml: float | None = None
     grams: float | None = None
@@ -126,9 +196,16 @@ def convert_ingredient(name: str, amount: float, unit: str) -> ConvertedIngredie
     )
 
 
-def convert_recipe(recipe: Recipe) -> ConvertRecipeResponse:
-    items = [
+def convert_recipe(recipe: Recipe, target_system: str | None = None) -> ConvertRecipeResponse:
+    items: list[ConvertedIngredient] = [
         convert_ingredient(ingredient.name, ingredient.amount, ingredient.unit)
         for ingredient in recipe.ingredients
     ]
+
+    normalized_target = target_system.strip().lower() if isinstance(target_system, str) else None
+    if normalized_target == "metric":
+        items = [_normalize_for_metric(item) for item in items]
+    elif normalized_target == "volume":
+        items = [_normalize_for_volume(item) for item in items]
+
     return ConvertRecipeResponse(recipe_id=recipe.id, items=items)
