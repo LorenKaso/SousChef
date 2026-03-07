@@ -1,37 +1,38 @@
 from __future__ import annotations
 
+from typing import Any
+
 from ..models import ConvertRecipeResponse, ConvertedIngredient, Recipe
+from .conversion_catalog import catalog
 
-CUP_ML = 240.0
-TBSP_ML = 15.0
-TSP_ML = 5.0
+def _volume_units_ml() -> dict[str, float]:
+    raw_units = catalog.raw.get("meta", {}).get("volume_units_ml", {})
+    result: dict[str, float] = {}
+    if not isinstance(raw_units, dict):
+        return result
 
-DENSITY_GRAMS_PER_CUP: dict[str, float] = {
-    "flour": 120.0,
-    "sugar": 200.0,
-    "milk": 240.0,
-    "oil": 218.0,
-}
-
-_CUP_UNITS = {"cup", "cups"}
-_TBSP_UNITS = {"tbsp", "tablespoon", "tablespoons"}
-_TSP_UNITS = {"tsp", "teaspoon", "teaspoons"}
-_ML_UNITS = {"ml"}
-_GRAM_UNITS = {"g", "gram", "grams"}
+    for unit_key, unit_ml in raw_units.items():
+        if isinstance(unit_key, str) and isinstance(unit_ml, (int, float)):
+            result[unit_key] = float(unit_ml)
+    return result
 
 
-def _normalize_name(name: str) -> str:
-    return name.strip().lower()
+def _grams_per_unit(ingredient_data: dict[str, Any] | None) -> dict[str, float]:
+    if not isinstance(ingredient_data, dict):
+        return {}
 
+    raw = ingredient_data.get("grams_per_unit", {})
+    result: dict[str, float] = {}
+    if not isinstance(raw, dict):
+        return result
 
-def _normalize_unit(unit: str) -> str:
-    return unit.strip().lower()
+    for unit_key, grams in raw.items():
+        if isinstance(unit_key, str) and isinstance(grams, (int, float)):
+            result[unit_key] = float(grams)
+    return result
 
 
 def convert_ingredient(name: str, amount: float, unit: str) -> ConvertedIngredient:
-    normalized_name = _normalize_name(name)
-    normalized_unit = _normalize_unit(unit)
-
     ml: float | None = None
     grams: float | None = None
     cups: float | None = None
@@ -39,38 +40,78 @@ def convert_ingredient(name: str, amount: float, unit: str) -> ConvertedIngredie
     tsp: float | None = None
     source: str | None = None
 
-    if normalized_unit in _CUP_UNITS:
-        cups = amount
-        ml = amount * CUP_ML
-    elif normalized_unit in _TBSP_UNITS:
-        tbsp = amount
-        ml = amount * TBSP_ML
-    elif normalized_unit in _TSP_UNITS:
-        tsp = amount
-        ml = amount * TSP_ML
-    elif normalized_unit in _ML_UNITS:
+    ingredient_key = catalog.get_ingredient_key(name)
+    unit_key = catalog.get_unit_key(unit)
+
+    # Unknown ingredient/unit fallback: keep original fields, avoid guessed conversions.
+    if ingredient_key is None or unit_key is None:
+        return ConvertedIngredient(
+            name=name,
+            original_amount=amount,
+            original_unit=unit,
+            ml=None,
+            grams=None,
+            cups=None,
+            tbsp=None,
+            tsp=None,
+            source=None,
+        )
+
+    ingredient_data = catalog.get_ingredient_data(ingredient_key)
+    grams_by_unit = _grams_per_unit(ingredient_data)
+    volume_by_unit = _volume_units_ml()
+
+    cup_ml = volume_by_unit.get("cup")
+    tbsp_ml = volume_by_unit.get("tbsp")
+    tsp_ml = volume_by_unit.get("tsp")
+
+    if unit_key in volume_by_unit:
+        ml = amount * volume_by_unit[unit_key]
+        source = "catalog"
+    elif unit_key == "ml":
         ml = amount
-    elif normalized_unit in _GRAM_UNITS:
+        source = "catalog"
+    elif unit_key in grams_by_unit:
+        grams = amount * grams_by_unit[unit_key]
+        source = "catalog"
+    elif unit_key == "g":
         grams = amount
+        source = "catalog"
 
-    grams_per_cup = DENSITY_GRAMS_PER_CUP.get(normalized_name)
+    if grams is None and unit_key in grams_by_unit:
+        grams = amount * grams_by_unit[unit_key]
+        source = "catalog"
 
-    # grams -> cups/ml if possible
-    if normalized_unit in _GRAM_UNITS and grams is not None and grams_per_cup is not None:
-        cups = grams / grams_per_cup
-        ml = cups * CUP_ML
-        source = "table"
-
-    # if we have ml, derive other volume units
     if ml is not None:
-        cups = ml / CUP_ML
-        tbsp = ml / TBSP_ML
-        tsp = ml / TSP_ML
+        if cup_ml and cup_ml > 0:
+            cups = ml / cup_ml
+        if tbsp_ml and tbsp_ml > 0:
+            tbsp = ml / tbsp_ml
+        if tsp_ml and tsp_ml > 0:
+            tsp = ml / tsp_ml
 
-    # if we have cups and density, derive grams
-    if cups is not None and grams_per_cup is not None:
-        grams = cups * grams_per_cup
-        source = "table"
+        if grams is None:
+            if isinstance(ingredient_data, dict) and ingredient_data.get("ml_equals_grams") is True:
+                grams = ml
+                source = "catalog"
+            elif cup_ml and cup_ml > 0 and "cup" in grams_by_unit:
+                grams = (ml / cup_ml) * grams_by_unit["cup"]
+                source = "catalog"
+
+    if grams is not None and ml is None:
+        if isinstance(ingredient_data, dict) and ingredient_data.get("ml_equals_grams") is True:
+            ml = grams
+        elif cup_ml and cup_ml > 0 and "cup" in grams_by_unit and grams_by_unit["cup"] > 0:
+            cups = grams / grams_by_unit["cup"]
+            ml = cups * cup_ml
+
+    if ml is not None:
+        if cups is None and cup_ml and cup_ml > 0:
+            cups = ml / cup_ml
+        if tbsp is None and tbsp_ml and tbsp_ml > 0:
+            tbsp = ml / tbsp_ml
+        if tsp is None and tsp_ml and tsp_ml > 0:
+            tsp = ml / tsp_ml
 
     return ConvertedIngredient(
         name=name,
