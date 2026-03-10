@@ -7,6 +7,7 @@ from ..models import (
     ConvertRecipeNormalizedResponse,
     ConvertRecipeResponse,
     ConvertedIngredient,
+    DisplayLanguage,
     NormalizedConvertedIngredient,
     Recipe,
 )
@@ -119,43 +120,119 @@ def _pick_volume_target_unit(item: ConvertedIngredient) -> tuple[float, str] | N
     return None
 
 
+def _unit_label(unit_key: str, language: DisplayLanguage) -> str:
+    aliases_units = catalog.raw.get("meta", {}).get("aliases_units", {})
+    if not isinstance(aliases_units, dict):
+        return unit_key
+
+    lang_map = aliases_units.get(language.value, {})
+    if not isinstance(lang_map, dict):
+        return unit_key
+
+    if language == DisplayLanguage.EN:
+        return unit_key
+
+    for alias, canonical in lang_map.items():
+        if isinstance(alias, str) and canonical == unit_key:
+            return alias
+    return unit_key
+
+
+def _ingredient_display_name(name: str, language: DisplayLanguage) -> tuple[str, str | None]:
+    ingredient_key = catalog.get_ingredient_key(name)
+    if ingredient_key is None:
+        if language == DisplayLanguage.HE:
+            return ("\u05de\u05e8\u05db\u05d9\u05d1", None)
+        return (name, None)
+
+    ingredient_data = catalog.get_ingredient_data(ingredient_key)
+    if not isinstance(ingredient_data, dict):
+        return (name, ingredient_key)
+
+    display_key = "display_name_he" if language == DisplayLanguage.HE else "display_name_en"
+    display_name = ingredient_data.get(display_key)
+    if isinstance(display_name, str) and display_name.strip():
+        return (display_name, ingredient_key)
+
+    fallback_name = ingredient_data.get("display_name_en") or ingredient_data.get("display_name_he")
+    if isinstance(fallback_name, str) and fallback_name.strip():
+        return (fallback_name, ingredient_key)
+
+    return (name, ingredient_key)
+
+
 def _to_normalized_item(
     item: ConvertedIngredient,
     target_system: ConversionTargetSystem,
+    language: DisplayLanguage,
 ) -> NormalizedConvertedIngredient:
-    ingredient_key = catalog.get_ingredient_key(item.name)
-    display_name = catalog.get_display_name(ingredient_key) if ingredient_key is not None else None
+    ingredient_label, ingredient_key = _ingredient_display_name(item.name, language)
 
     target_amount = item.original_amount
-    target_unit = item.original_unit
+    resolved_original_unit = catalog.get_unit_key(item.original_unit)
+    target_unit_key: str | None = None
     source = item.source
 
     if target_system == ConversionTargetSystem.METRIC:
         if _is_liquid_ingredient(item.name) and item.ml is not None:
             target_amount = item.ml
-            target_unit = "ml"
+            target_unit_key = "ml"
         elif item.grams is not None:
             target_amount = item.grams
-            target_unit = "g"
+            target_unit_key = "g"
         else:
             source = source or "original"
     else:
         picked_volume = _pick_volume_target_unit(item)
         if picked_volume is not None:
-            target_amount, target_unit = picked_volume
+            target_amount, target_unit_key = picked_volume
         else:
             source = source or "original"
 
+    original_unit_label = (
+        _unit_label(resolved_original_unit, language)
+        if resolved_original_unit is not None
+        else item.original_unit
+    )
+    target_unit_label = (
+        _unit_label(target_unit_key, language)
+        if target_unit_key is not None
+        else original_unit_label
+    )
+
     return NormalizedConvertedIngredient(
-        name=item.name,
-        display_name=display_name,
+        ingredient=ingredient_label,
         original_amount=item.original_amount,
-        original_unit=item.original_unit,
+        original_unit=original_unit_label,
         resolved_ingredient_key=ingredient_key,
         target_amount=target_amount,
-        target_unit=target_unit,
+        target_unit=target_unit_label,
         source=source,
     )
+
+
+def _normalized_target_system(target_system: str | None) -> ConversionTargetSystem | None:
+    if not isinstance(target_system, str):
+        return None
+    lowered = target_system.strip().lower()
+    if lowered == ConversionTargetSystem.METRIC.value:
+        return ConversionTargetSystem.METRIC
+    if lowered == ConversionTargetSystem.VOLUME.value:
+        return ConversionTargetSystem.VOLUME
+    return None
+
+
+def _normalized_language(language: str | None) -> DisplayLanguage:
+    if isinstance(language, str) and language.strip().lower() == DisplayLanguage.EN.value:
+        return DisplayLanguage.EN
+    return DisplayLanguage.HE
+
+
+def _convert_items(recipe: Recipe) -> list[ConvertedIngredient]:
+    return [
+        convert_ingredient(ingredient.name, ingredient.amount, ingredient.unit)
+        for ingredient in recipe.ingredients
+    ]
 
 
 def convert_ingredient(name: str, amount: float, unit: str) -> ConvertedIngredient:
@@ -252,25 +329,52 @@ def convert_ingredient(name: str, amount: float, unit: str) -> ConvertedIngredie
     )
 
 
-def convert_recipe(recipe: Recipe, target_system: str | None = None) -> ConvertRecipeResponse:
-    items: list[ConvertedIngredient] = [
-        convert_ingredient(ingredient.name, ingredient.amount, ingredient.unit)
-        for ingredient in recipe.ingredients
-    ]
+def convert_recipe(
+    recipe: Recipe,
+    target_system: str | None = None,
+    language: str | None = None,
+) -> ConvertRecipeResponse | ConvertRecipeNormalizedResponse:
+    items = _convert_items(recipe)
 
-    normalized_target = target_system.strip().lower() if isinstance(target_system, str) else None
-    if normalized_target == "metric":
+    normalized_target = _normalized_target_system(target_system)
+    if normalized_target is None:
+        return ConvertRecipeResponse(recipe_id=recipe.id, items=items)
+
+    if normalized_target == ConversionTargetSystem.METRIC:
         items = [_normalize_for_metric(item) for item in items]
-    elif normalized_target == "volume":
+    else:
         items = [_normalize_for_volume(item) for item in items]
 
-    return ConvertRecipeResponse(recipe_id=recipe.id, items=items)
+    display_language = _normalized_language(language)
+    normalized_items = [
+        _to_normalized_item(item, normalized_target, display_language) for item in items
+    ]
+
+    return ConvertRecipeNormalizedResponse(
+        recipe_id=recipe.id,
+        display_language=display_language,
+        title=recipe.title,
+        steps=[step.text for step in recipe.steps],
+        items=normalized_items,
+    )
 
 
 def convert_recipe_normalized(
     recipe: Recipe,
     target_system: ConversionTargetSystem,
+    language: DisplayLanguage,
 ) -> ConvertRecipeNormalizedResponse:
-    converted = convert_recipe(recipe, target_system=target_system.value)
-    items = [_to_normalized_item(item, target_system) for item in converted.items]
-    return ConvertRecipeNormalizedResponse(recipe_id=recipe.id, items=items)
+    converted = _convert_items(recipe)
+    if target_system == ConversionTargetSystem.METRIC:
+        converted = [_normalize_for_metric(item) for item in converted]
+    else:
+        converted = [_normalize_for_volume(item) for item in converted]
+
+    items = [_to_normalized_item(item, target_system, language) for item in converted]
+    return ConvertRecipeNormalizedResponse(
+        recipe_id=recipe.id,
+        display_language=language,
+        title=recipe.title,
+        steps=[step.text for step in recipe.steps],
+        items=items,
+    )

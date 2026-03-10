@@ -52,7 +52,7 @@ def convert_recipe_endpoint(
     recipe = store.get_recipe(recipe_id)
     if recipe is None:
         raise HTTPException(status_code=404, detail="Recipe not found")
-    return convert_recipe_normalized(recipe, payload.target_system)
+    return convert_recipe_normalized(recipe, payload.target_system, payload.language)
 
 
 @router.post("/session/start", response_model=Session)

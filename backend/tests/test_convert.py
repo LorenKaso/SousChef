@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app, seed_sample_recipe
-from app.models import Ingredient, Recipe
+from app.models import Ingredient, Recipe, Step
 from app.services.convert import convert_ingredient, convert_recipe
 from app.store import store
 
@@ -21,19 +21,23 @@ def test_convert_recipe_endpoint() -> None:
 
     recipe_id = recipes[0]["id"]
 
-    convert_response = client.post(f"/recipes/{recipe_id}/convert")
+    convert_response = client.post(
+        f"/recipes/{recipe_id}/convert",
+        json={"target_system": "metric", "language": "en"},
+    )
     assert convert_response.status_code == 200
 
     payload = convert_response.json()
     assert payload["items"]
+    assert payload["recipe_id"] == recipe_id
 
-    cup_items = [item for item in payload["items"] if item["original_unit"] in {"cup", "cups"}]
-    assert cup_items
-    assert all(item["ml"] is not None for item in cup_items)
-    assert all(item["cups"] is not None for item in cup_items)
-
-    flour_item = next(item for item in payload["items"] if item["name"].lower() == "flour")
-    assert flour_item["grams"] is not None
+    flour_item = next(
+        item for item in payload["items"] if item["resolved_ingredient_key"] == "white_flour"
+    )
+    assert flour_item["ingredient"] == "white flour"
+    assert flour_item["original_unit"] == "cup"
+    assert flour_item["target_unit"] == "g"
+    assert flour_item["target_amount"] > 0
 
 
 def test_convert_ingredient_tablespoon_to_volume_units() -> None:
@@ -255,3 +259,53 @@ def test_convert_recipe_volume_normalizes_all_safe_ingredients() -> None:
     assert egg_item.cups is None
     assert egg_item.tbsp is None
     assert egg_item.tsp is None
+
+
+def test_convert_recipe_endpoint_hebrew_language_labels() -> None:
+    client = TestClient(app)
+    recipe_id = client.get("/recipes").json()[0]["id"]
+
+    response = client.post(
+        f"/recipes/{recipe_id}/convert",
+        json={"target_system": "volume", "language": "he"},
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    flour_item = next(
+        item for item in payload["items"] if item["resolved_ingredient_key"] == "white_flour"
+    )
+
+    assert flour_item["ingredient"] != "white flour"
+    assert flour_item["original_unit"] != "cup"
+    assert flour_item["target_unit"] != "cup"
+
+
+def test_convert_recipe_metric_hebrew_returns_consistent_hebrew_view() -> None:
+    recipe = Recipe(
+        id="recipe-hebrew-view",
+        title="Basic Pancakes",
+        servings=2,
+        ingredients=[
+            Ingredient(name="flour", amount=1, unit="cup"),
+            Ingredient(name="milk", amount=1, unit="cup"),
+            Ingredient(name="sugar", amount=1, unit="tbsp"),
+            Ingredient(name="egg", amount=2, unit="unit"),
+        ],
+        steps=[
+            Step(index=1, text="Mix the ingredients."),
+            Step(index=2, text="Cook on a hot pan."),
+        ],
+    )
+
+    # TDD: once supported, this should be convert_recipe(..., target_system="metric", language="he").
+    result = convert_recipe(recipe, target_system="metric")
+
+    assert hasattr(result, "display_language")
+    assert result.display_language == "he"
+
+    assert result.items
+    assert all(getattr(item, "ingredient", None) for item in result.items)
+    assert all(getattr(item, "target_unit", None) for item in result.items)
+    assert all("a" <= char.lower() <= "z" for item in result.items for char in str(item.ingredient) if char.isalpha()) is False
+    assert all("a" <= char.lower() <= "z" for item in result.items for char in str(item.target_unit) if char.isalpha()) is False

@@ -50,13 +50,18 @@ class ConversionTargetSystem(str, Enum):
     VOLUME = "volume"
 
 
+class DisplayLanguage(str, Enum):
+    HE = "he"
+    EN = "en"
+
+
 class ConvertRecipeRequest(BaseModel):
     target_system: ConversionTargetSystem
+    language: DisplayLanguage
 
 
 class NormalizedConvertedIngredient(BaseModel):
-    name: str
-    display_name: str | None = None
+    ingredient: str
     original_amount: float
     original_unit: str
     resolved_ingredient_key: str | None = None
@@ -67,6 +72,9 @@ class NormalizedConvertedIngredient(BaseModel):
 
 class ConvertRecipeNormalizedResponse(BaseModel):
     recipe_id: str
+    display_language: DisplayLanguage = DisplayLanguage.EN
+    title: str | None = None
+    steps: list[str] = Field(default_factory=list)
     items: list[NormalizedConvertedIngredient]
 
 
