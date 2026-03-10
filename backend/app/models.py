@@ -86,11 +86,18 @@ class Timer(BaseModel):
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class PendingTimerProposal(BaseModel):
+    seconds: int
+    label: str | None = None
+    step_index: int | None = None
+
+
 class Session(BaseModel):
     id: str
     recipe_id: str
     current_step: int = 1
     active_timers: list[Timer] = Field(default_factory=list)
+    pending_timer: PendingTimerProposal | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
