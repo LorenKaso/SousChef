@@ -26,6 +26,10 @@ _HE_GRAMS_TO_CUPS_PATTERN = re.compile(
 _HE_RECIPE_INGREDIENT_AMOUNT_PATTERN = re.compile(
     r"^\s*\u05db\u05de\u05d4\s+(.+?)\s+\u05e6\u05e8\u05d9\u05da(?:\s+\u05d1\u05de\u05ea\u05db\u05d5\u05df)?\??\s*$"
 )
+_HE_INGREDIENT_PROGRESS_PATTERN = re.compile(
+    r"^\s*(?:\u05e9\u05de\u05ea\u05d9|\u05d4\u05d5\u05e1\u05e4\u05ea\u05d9|"
+    r"\u05e1\u05d9\u05d9\u05de\u05ea\u05d9\s+\u05e2\u05dd)\s+(.+?)[\?\.\!]*\s*$"
+)
 
 
 def _get_current_step_text(recipe: Recipe, current_step: int, lang: str) -> str:
@@ -173,6 +177,89 @@ def _build_hebrew_recipe_ingredient_answer(text: str, recipe: Recipe) -> str | N
     return f"\u05e6\u05e8\u05d9\u05da {amount_text} {unit_text} {ingredient_text}."
 
 
+def _clean_ingredient_query(name: str) -> str:
+    cleaned = name.strip().strip("?.!,")
+    cleaned = re.sub(r"^\u05d0\u05ea\s+", "", cleaned)
+    cleaned = re.sub(r"^\u05e2\u05dd\s+", "", cleaned)
+    if cleaned.startswith("\u05d4") and len(cleaned) > 1:
+        cleaned = cleaned[1:]
+    return cleaned
+
+
+def _ingredient_key_for_text(name: str) -> str | None:
+    direct_key = catalog.get_ingredient_key(name)
+    if direct_key is not None:
+        return direct_key
+    cleaned = _clean_ingredient_query(name)
+    return catalog.get_ingredient_key(cleaned)
+
+
+def _ingredient_aliases_for_key(key: str) -> list[str]:
+    data = catalog.get_ingredient_data(key)
+    if not isinstance(data, dict):
+        return []
+
+    aliases: list[str] = []
+    for field in ("aliases_en", "aliases_he"):
+        values = data.get(field, [])
+        if isinstance(values, list):
+            aliases.extend([v.strip().lower() for v in values if isinstance(v, str) and v.strip()])
+    for field in ("display_name_en", "display_name_he"):
+        value = data.get(field)
+        if isinstance(value, str) and value.strip():
+            aliases.append(value.strip().lower())
+    return aliases
+
+
+def _find_step_relevant_ingredient_keys(recipe: Recipe, step_text: str) -> list[str]:
+    lowered_step = step_text.lower()
+    relevant: list[str] = []
+
+    for ingredient in recipe.ingredients:
+        ingredient_key = _ingredient_key_for_text(ingredient.name)
+        if ingredient_key is None or ingredient_key in relevant:
+            continue
+
+        aliases = _ingredient_aliases_for_key(ingredient_key)
+        if any(alias in lowered_step for alias in aliases):
+            relevant.append(ingredient_key)
+    return relevant
+
+
+def _build_hebrew_progression_answer(text: str, recipe: Recipe, current_step: int) -> str | None:
+    match = _HE_INGREDIENT_PROGRESS_PATTERN.match(text)
+    if match is None or not recipe.steps:
+        return None
+
+    mentioned_name = _clean_ingredient_query(match.group(1))
+    mentioned_key = _ingredient_key_for_text(mentioned_name)
+    if mentioned_key is None:
+        return None
+
+    idx = max(0, min(current_step - 1, len(recipe.steps) - 1))
+    step_text = recipe.steps[idx].text
+    relevant_keys = _find_step_relevant_ingredient_keys(recipe, step_text)
+    if mentioned_key not in relevant_keys:
+        return None
+
+    mentioned_index = relevant_keys.index(mentioned_key)
+    preferred_keys = relevant_keys[mentioned_index + 1 :] + relevant_keys[:mentioned_index]
+    for next_key in preferred_keys:
+        for ingredient in recipe.ingredients:
+            key = _ingredient_key_for_text(ingredient.name)
+            if key == next_key:
+                amount_text = _format_amount(ingredient.amount)
+                unit_text = _hebrew_unit_label(ingredient.unit, ingredient.amount)
+                next_name = _hebrew_ingredient_label(ingredient.name)
+                return (
+                    f"\u05de\u05e2\u05d5\u05dc\u05d4. \u05e2\u05db\u05e9\u05d9\u05d5 "
+                    f"\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3 "
+                    f"{amount_text} {unit_text} {next_name}."
+                )
+
+    return "\u05de\u05e6\u05d5\u05d9\u05df. \u05d0\u05e4\u05e9\u05e8 \u05dc\u05e2\u05d1\u05d5\u05e8 \u05dc\u05e9\u05dc\u05d1 \u05d4\u05d1\u05d0."
+
+
 def format_duration(seconds: int, lang: str) -> str:
     seconds = max(0,int(seconds))
 
@@ -209,6 +296,10 @@ def process_ask(session: Session, recipe: Recipe, text: str) -> tuple[str, list[
     recipe_ingredient_answer = _build_hebrew_recipe_ingredient_answer(text, recipe)
     if recipe_ingredient_answer is not None:
         return recipe_ingredient_answer, actions, session
+
+    progression_answer = _build_hebrew_progression_answer(text, recipe, session.current_step)
+    if progression_answer is not None:
+        return progression_answer, actions, session
 
     if _has_keyword(lowered, _NEXT_KEYWORDS):
         if recipe.steps:
