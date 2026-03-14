@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.db import init_db
 from app.main import app, seed_sample_recipe
 from app.models import Ingredient, Recipe, RecipeSection, Step
 from app.services.conversion_catalog import catalog
@@ -30,6 +31,7 @@ def make_recipe(
 
 
 def setup_function() -> None:
+    init_db()
     store.clear()
     seed_sample_recipe()
 

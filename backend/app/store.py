@@ -1,90 +1,104 @@
 from __future__ import annotations
 
-import os
-from collections.abc import Iterable
-from datetime import datetime, timedelta, timezone
+from collections.abc import Iterable, Iterator, MutableMapping
 
 from .models import Recipe, Session
+from .repositories.recipe_repository import RecipeRepository
+from .repositories.session_repository import SessionRepository
+from .services.recipe_service import RecipeService
+from .services.session_service import SessionService
 
 
-class InMemoryStore:
-    def __init__(self) -> None:
-        self.recipes: dict[str, Recipe] = {}
-        self.sessions: dict[str, Session] = {}
+class _RecipeMapping(MutableMapping[str, Recipe]):
+    def __init__(self, repository: RecipeRepository) -> None:
+        self.repository = repository
 
-    def is_empty(self) -> bool:
-        return len(self.recipes) == 0
-
-    def clear(self) -> None:
-        self.recipes.clear()
-        self.sessions.clear()
-
-    def add_recipe(self, recipe: Recipe) -> Recipe:
-        self.recipes[recipe.id] = recipe
+    def __getitem__(self, key: str) -> Recipe:
+        recipe = self.repository.get(key)
+        if recipe is None:
+            raise KeyError(key)
         return recipe
 
+    def __setitem__(self, key: str, value: Recipe) -> None:
+        if key != value.id:
+            raise KeyError(key)
+        self.repository.add(value)
+
+    def __delitem__(self, key: str) -> None:
+        raise NotImplementedError("Recipe deletion is not supported through the store facade.")
+
+    def __iter__(self) -> Iterator[str]:
+        return (recipe.id for recipe in self.repository.list())
+
+    def __len__(self) -> int:
+        return len(self.repository.list())
+
+
+class _SessionMapping(MutableMapping[str, Session]):
+    def __init__(self, repository: SessionRepository) -> None:
+        self.repository = repository
+
+    def __getitem__(self, key: str) -> Session:
+        session = self.repository.get(key)
+        if session is None:
+            raise KeyError(key)
+        return session
+
+    def __setitem__(self, key: str, value: Session) -> None:
+        if key != value.id:
+            raise KeyError(key)
+        self.repository.upsert(value)
+
+    def __delitem__(self, key: str) -> None:
+        self.repository.delete(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return (session.id for session in self.repository.list())
+
+    def __len__(self) -> int:
+        return len(self.repository.list())
+
+    def pop(self, key: str, default: Session | None = None) -> Session | None:
+        session = self.repository.get(key)
+        if session is None:
+            return default
+        self.repository.delete(key)
+        return session
+
+
+class StoreFacade:
+    def __init__(self) -> None:
+        self.recipe_repository = RecipeRepository()
+        self.session_repository = SessionRepository()
+        self.recipe_service = RecipeService(self.recipe_repository)
+        self.session_service = SessionService(self.session_repository)
+        self.recipes = _RecipeMapping(self.recipe_repository)
+        self.sessions = _SessionMapping(self.session_repository)
+
+    def is_empty(self) -> bool:
+        return self.recipe_service.is_empty()
+
+    def clear(self) -> None:
+        self.session_service.clear()
+        self.recipe_service.clear()
+
+    def add_recipe(self, recipe: Recipe) -> Recipe:
+        return self.recipe_service.add_recipe(recipe)
+
     def list_recipes(self) -> Iterable[Recipe]:
-        return self.recipes.values()
+        return self.recipe_service.list_recipes()
 
     def get_recipe(self, recipe_id: str) -> Recipe | None:
-        return self.recipes.get(recipe_id)
+        return self.recipe_service.get_recipe(recipe_id)
 
     def add_session(self, session: Session) -> Session:
-        now = datetime.now(timezone.utc)
-        session.created_at = now
-        session.updated_at = now
-        self._prune_expired_timers(session, now)
-        self.sessions[session.id] = session
-        return session
+        return self.session_service.create_session(session)
 
     def get_session(self, session_id: str) -> Session | None:
-        session = self.sessions.get(session_id)
-        if session is None:
-            return None
-
-        now = datetime.now(timezone.utc)
-        if self._is_session_expired(session, now):
-            del self.sessions[session_id]
-            return None
-
-        self._prune_expired_timers(session, now)
-        return session
+        return self.session_service.get_session(session_id)
 
     def update_session(self, session: Session) -> Session:
-        now = datetime.now(timezone.utc)
-        session.updated_at = now
-        self._prune_expired_timers(session, now)
-        self.sessions[session.id] = session
-        return session
-
-    @staticmethod
-    def _session_ttl_seconds() -> int:
-        raw = os.getenv("SESSION_TTL_SECONDS", "86400")
-        try:
-            ttl = int(raw)
-        except (TypeError, ValueError):
-            return 86400
-        return ttl if ttl > 0 else 86400
-
-    def _is_session_expired(self, session: Session, now: datetime) -> bool:
-        age_seconds = (now - session.updated_at).total_seconds()
-        return age_seconds > self._session_ttl_seconds()
-
-    @staticmethod
-    def _prune_expired_timers(session: Session, now: datetime) -> None:
-        active_timers = []
-        for timer in session.active_timers:
-            started_at = timer.started_at
-            if started_at.tzinfo is None:
-                started_at = started_at.replace(tzinfo=timezone.utc)
-            else:
-                started_at = started_at.astimezone(timezone.utc)
-
-            expires_at = started_at + timedelta(seconds=timer.seconds)
-            if now <= expires_at:
-                active_timers.append(timer)
-
-        session.active_timers = active_timers
+        return self.session_service.update_session(session)
 
 
-store = InMemoryStore()
+store = StoreFacade()

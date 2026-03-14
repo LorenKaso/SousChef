@@ -8,3 +8,6 @@ backend/.venv/
 backend/.env
 .vscode/
 *.log
+*.db
+backend/app/data/*.db
+backend/test_*.db

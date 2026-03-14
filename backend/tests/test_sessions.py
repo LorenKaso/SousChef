@@ -3,6 +3,7 @@ import re
 
 from fastapi.testclient import TestClient
 
+from app.db import init_db
 from app.main import app, seed_sample_recipe
 from app.models import Ingredient, Recipe, RecipeSection, Step, Timer
 from app.store import store
@@ -14,6 +15,7 @@ TIME_LEFT_TEXT = "time left"
 
 
 def setup_function() -> None:
+    init_db()
     store.clear()
     seed_sample_recipe()
 
@@ -341,7 +343,7 @@ def test_time_left_timer_finished(monkeypatch) -> None:
     session.active_timers[-1].started_at = datetime.now(timezone.utc) - timedelta(seconds=30)
     store.sessions[session_id] = session
 
-    monkeypatch.setattr(store, "_prune_expired_timers", lambda _session, _now: None)
+    monkeypatch.setattr(store.session_service, "_prune_expired_timers", lambda _session, _now: None)
 
     ask_response = client.post(f"/session/{session_id}/ask", json={"text": TIME_LEFT_TEXT})
     assert ask_response.status_code == 200
@@ -349,6 +351,20 @@ def test_time_left_timer_finished(monkeypatch) -> None:
     assert payload["answer"] == "Timer finished."
     action_types = [action["type"] for action in payload["actions"]]
     assert "TIMER_FINISHED" in action_types
+
+
+def test_session_persists_across_repository_reload() -> None:
+    client = TestClient(app)
+    recipe_id = client.get("/recipes").json()[0]["id"]
+    session_id = _start_session(client, recipe_id)
+
+    advance_response = client.post(f"/session/{session_id}/ask", json={"text": HE_DONE})
+    assert advance_response.status_code == 200
+
+    reloaded_session = store.session_repository.get(session_id)
+    assert reloaded_session is not None
+    assert reloaded_session.current_item_index == 1
+    assert reloaded_session.current_phase == "ingredients"
 
 
 def test_time_left_english_response_shape() -> None:

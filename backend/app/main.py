@@ -1,7 +1,11 @@
 from __future__ import annotations
+
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+
 from .api import router
+from .db import init_db
 from .models import Ingredient, Recipe, RecipeSection, Step
 from .store import store
 
@@ -107,15 +111,16 @@ def sample_recipes() -> list[Recipe]:
 
 
 def seed_sample_recipe() -> None:
-    if not store.is_empty():
+    if not store.recipe_service.is_empty():
         return
 
     for recipe in sample_recipes():
-        store.add_recipe(recipe)
+        store.recipe_service.add_recipe(recipe)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_db()
     seed_sample_recipe()
     yield
 
