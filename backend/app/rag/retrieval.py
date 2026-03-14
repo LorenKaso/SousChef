@@ -14,6 +14,7 @@ class RetrievalResult(BaseModel):
 
 class RetrievalResponse(BaseModel):
     query: str
+    recipe_id: str | None = None
     results: list[RetrievalResult] = Field(default_factory=list)
 
 
@@ -37,14 +38,21 @@ class RecipeRetriever:
         embeddings = self.embedder.embed_texts([chunk.text for chunk in chunks])
         self.vector_store.add(chunks, embeddings)
 
-    def retrieve(self, query: str, *, limit: int = 4) -> RetrievalResponse:
+    def retrieve(
+        self,
+        query: str,
+        *,
+        limit: int = 4,
+        recipe_id: str | None = None,
+    ) -> RetrievalResponse:
         if not self._indexed_chunks:
-            return RetrievalResponse(query=query, results=[])
+            return RetrievalResponse(query=query, recipe_id=recipe_id, results=[])
 
         query_embedding = self.embedder.embed_query(query)
-        matches = self.vector_store.search(query_embedding, limit=limit)
+        matches = self.vector_store.search(query_embedding, limit=limit, recipe_id=recipe_id)
         return RetrievalResponse(
             query=query,
+            recipe_id=recipe_id,
             results=[
                 RetrievalResult(chunk=chunk, score=score)
                 for chunk, score in matches

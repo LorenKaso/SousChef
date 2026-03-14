@@ -33,7 +33,13 @@ class RagService:
         self.retriever.index(chunks)
         return chunks
 
-    def retrieve(self, query: str, *, limit: int = 4) -> RetrievalResponse:
+    def retrieve(
+        self,
+        query: str,
+        *,
+        limit: int = 4,
+        recipe_id: str | None = None,
+    ) -> RetrievalResponse:
         if self.retriever.indexed_count == 0:
             self.rebuild_index()
-        return self.retriever.retrieve(query, limit=limit)
+        return self.retriever.retrieve(query, limit=limit, recipe_id=recipe_id)

@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 import math
-
 from .chunking import RecipeChunk
 
 
@@ -46,13 +44,27 @@ class FaissVectorStore:
         self._faiss = faiss
         self._index = index
 
-    def search(self, query_embedding: list[float], *, limit: int = 4) -> list[tuple[RecipeChunk, float]]:
+    def search(
+        self,
+        query_embedding: list[float],
+        *,
+        limit: int = 4,
+        recipe_id: str | None = None,
+    ) -> list[tuple[RecipeChunk, float]]:
         if not self._chunks:
             return []
         if self._dimension is None or len(query_embedding) != self._dimension:
             raise ValueError("Query embedding dimension does not match the index.")
 
-        if self._index is not None and self._faiss is not None:
+        candidate_pairs = [
+            (chunk, embedding)
+            for chunk, embedding in zip(self._chunks, self._embeddings, strict=False)
+            if recipe_id is None or chunk.recipe_id == recipe_id
+        ]
+        if not candidate_pairs:
+            return []
+
+        if recipe_id is None and self._index is not None and self._faiss is not None:
             query_vector = self._to_faiss_array([query_embedding])
             distances, indices = self._index.search(query_vector, min(limit, len(self._chunks)))
             results: list[tuple[RecipeChunk, float]] = []
@@ -64,7 +76,7 @@ class FaissVectorStore:
 
         scored = [
             (chunk, _cosine_similarity(query_embedding, embedding))
-            for chunk, embedding in zip(self._chunks, self._embeddings, strict=False)
+            for chunk, embedding in candidate_pairs
         ]
         scored.sort(key=lambda item: item[1], reverse=True)
         return scored[:limit]

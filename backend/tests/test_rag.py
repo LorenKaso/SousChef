@@ -80,10 +80,46 @@ def test_recipe_retriever_returns_recipe_chunks_ranked_by_query() -> None:
     assert "Mushroom Cream Pasta" in response.results[0].chunk.text
 
 
+def test_recipe_retrieval_can_be_scoped_to_a_single_recipe() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+    rag_service.rebuild_index()
+
+    response = rag_service.retrieve(
+        "chocolate cake",
+        limit=3,
+        recipe_id="recipe-mushroom-cream-pasta",
+    )
+
+    assert response.recipe_id == "recipe-mushroom-cream-pasta"
+    assert response.results
+    assert all(
+        result.chunk.recipe_id == "recipe-mushroom-cream-pasta"
+        for result in response.results
+    )
+
+
+def test_recipe_retrieval_remains_global_without_recipe_scope() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+    rag_service.rebuild_index()
+
+    response = rag_service.retrieve("chocolate cake", limit=3)
+
+    assert response.recipe_id is None
+    assert response.results
+    assert response.results[0].chunk.recipe_id == "recipe-birthday-chocolate-cake"
+
+
 def test_retriever_handles_empty_index() -> None:
     retriever = RecipeRetriever(embedder=KeywordEmbedder())
 
     response = retriever.retrieve("find cake")
 
     assert response.query == "find cake"
+    assert response.recipe_id is None
     assert response.results == []
