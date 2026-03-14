@@ -12,9 +12,16 @@ class RetrievalResult(BaseModel):
     score: float
 
 
+class RetrievalContext(BaseModel):
+    session_id: str | None = None
+    recipe_id: str | None = None
+    section_index: int | None = None
+    phase: str | None = None
+
+
 class RetrievalResponse(BaseModel):
     query: str
-    recipe_id: str | None = None
+    context: RetrievalContext | None = None
     results: list[RetrievalResult] = Field(default_factory=list)
 
 
@@ -43,18 +50,43 @@ class RecipeRetriever:
         query: str,
         *,
         limit: int = 4,
-        recipe_id: str | None = None,
+        context: RetrievalContext | None = None,
     ) -> RetrievalResponse:
         if not self._indexed_chunks:
-            return RetrievalResponse(query=query, recipe_id=recipe_id, results=[])
+            return RetrievalResponse(query=query, context=context, results=[])
 
         query_embedding = self.embedder.embed_query(query)
-        matches = self.vector_store.search(query_embedding, limit=limit, recipe_id=recipe_id)
+        matches = self.vector_store.search(
+            query_embedding,
+            limit=limit,
+            recipe_id=context.recipe_id if context is not None else None,
+            score_adjuster=self._build_score_adjuster(context),
+        )
         return RetrievalResponse(
             query=query,
-            recipe_id=recipe_id,
+            context=context,
             results=[
                 RetrievalResult(chunk=chunk, score=score)
                 for chunk, score in matches
             ],
         )
+
+    @staticmethod
+    def _build_score_adjuster(context: RetrievalContext | None):
+        if context is None:
+            return None
+        if context.section_index is None and context.phase is None:
+            return None
+
+        def adjust(chunk: RecipeChunk, base_score: float) -> float:
+            score = base_score
+            if context.section_index is not None:
+                chunk_section = chunk.metadata.get("section_index")
+                if chunk_section == context.section_index:
+                    score += 0.15
+
+            if context.phase is not None and chunk.chunk_type == context.phase:
+                score += 0.1
+            return score
+
+        return adjust

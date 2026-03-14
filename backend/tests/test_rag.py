@@ -14,7 +14,17 @@ from app.store import store
 class KeywordEmbedder:
     def __init__(self) -> None:
         self.model_name = "test-keyword-embedder"
-        self._features = ["mushroom", "pasta", "cake", "chocolate", "flour", "sugar"]
+        self._features = [
+            "mushroom",
+            "pasta",
+            "cake",
+            "chocolate",
+            "flour",
+            "sugar",
+            "cream",
+            "parmesan",
+            "simmer",
+        ]
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         return [self.embed_query(text) for text in texts]
@@ -93,7 +103,8 @@ def test_recipe_retrieval_can_be_scoped_to_a_single_recipe() -> None:
         recipe_id="recipe-mushroom-cream-pasta",
     )
 
-    assert response.recipe_id == "recipe-mushroom-cream-pasta"
+    assert response.context is not None
+    assert response.context.recipe_id == "recipe-mushroom-cream-pasta"
     assert response.results
     assert all(
         result.chunk.recipe_id == "recipe-mushroom-cream-pasta"
@@ -110,9 +121,64 @@ def test_recipe_retrieval_remains_global_without_recipe_scope() -> None:
 
     response = rag_service.retrieve("chocolate cake", limit=3)
 
-    assert response.recipe_id is None
+    assert response.context is None
     assert response.results
     assert response.results[0].chunk.recipe_id == "recipe-birthday-chocolate-cake"
+
+
+def test_session_aware_retrieval_uses_active_recipe_context() -> None:
+    session = store.session_service.start_session("recipe-mushroom-cream-pasta")
+
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        session_service=store.session_service,
+        embedder=KeywordEmbedder(),
+    )
+    rag_service.rebuild_index()
+
+    response = rag_service.retrieve(
+        "When do I add cream?",
+        limit=3,
+        session_id=session.id,
+    )
+
+    assert response.context is not None
+    assert response.context.session_id == session.id
+    assert response.context.recipe_id == "recipe-mushroom-cream-pasta"
+    assert response.results
+    assert all(
+        result.chunk.recipe_id == "recipe-mushroom-cream-pasta"
+        for result in response.results
+    )
+
+
+def test_session_context_prefers_current_section_and_phase() -> None:
+    session = store.session_service.start_session("recipe-mushroom-cream-pasta")
+    session.current_section_index = 1
+    session.current_phase = "steps"
+    session.current_item_index = 1
+    store.sessions[session.id] = session
+
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        session_service=store.session_service,
+        embedder=KeywordEmbedder(),
+    )
+    rag_service.rebuild_index()
+
+    response = rag_service.retrieve(
+        "When do I add cream and parmesan?",
+        limit=3,
+        session_id=session.id,
+    )
+
+    assert response.context is not None
+    assert response.context.section_index == 1
+    assert response.context.phase == "steps"
+    assert response.results
+    assert response.results[0].chunk.recipe_id == "recipe-mushroom-cream-pasta"
+    assert response.results[0].chunk.chunk_type == "steps"
+    assert response.results[0].chunk.metadata["section_index"] == 1
 
 
 def test_retriever_handles_empty_index() -> None:
@@ -121,5 +187,5 @@ def test_retriever_handles_empty_index() -> None:
     response = retriever.retrieve("find cake")
 
     assert response.query == "find cake"
-    assert response.recipe_id is None
+    assert response.context is None
     assert response.results == []

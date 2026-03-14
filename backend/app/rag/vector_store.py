@@ -1,5 +1,8 @@
 from __future__ import annotations
+
 import math
+from collections.abc import Callable
+
 from .chunking import RecipeChunk
 
 
@@ -50,6 +53,7 @@ class FaissVectorStore:
         *,
         limit: int = 4,
         recipe_id: str | None = None,
+        score_adjuster: Callable[[RecipeChunk, float], float] | None = None,
     ) -> list[tuple[RecipeChunk, float]]:
         if not self._chunks:
             return []
@@ -64,7 +68,7 @@ class FaissVectorStore:
         if not candidate_pairs:
             return []
 
-        if recipe_id is None and self._index is not None and self._faiss is not None:
+        if recipe_id is None and score_adjuster is None and self._index is not None and self._faiss is not None:
             query_vector = self._to_faiss_array([query_embedding])
             distances, indices = self._index.search(query_vector, min(limit, len(self._chunks)))
             results: list[tuple[RecipeChunk, float]] = []
@@ -74,10 +78,12 @@ class FaissVectorStore:
                 results.append((self._chunks[int(idx)], float(score)))
             return results
 
-        scored = [
-            (chunk, _cosine_similarity(query_embedding, embedding))
-            for chunk, embedding in candidate_pairs
-        ]
+        scored = []
+        for chunk, embedding in candidate_pairs:
+            score = _cosine_similarity(query_embedding, embedding)
+            if score_adjuster is not None:
+                score = score_adjuster(chunk, score)
+            scored.append((chunk, score))
         scored.sort(key=lambda item: item[1], reverse=True)
         return scored[:limit]
 
