@@ -1,19 +1,43 @@
 ﻿from __future__ import annotations
-
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from math import ceil
-
-from ..models import Action, ActionType, PendingTimerProposal, Recipe, Session, Timer
+from ..models import Action, ActionType, Ingredient, PendingTimerProposal, Recipe, Session, Step, Timer
 from .convert import convert_ingredient, convert_recipe
 from .conversion_catalog import catalog
 from .conversion import build_cup_conversion_answer, needs_cup_conversion, parse_timer_seconds
 
 
-_NEXT_KEYWORDS = {"next", "×§×“×™×ž×”", "×”×‘×"}
-_PREV_KEYWORDS = {"back", "prev", "previous", "××—×•×¨×”", "×—×–×•×¨"}
-_WHAT_NOW_KEYWORDS = {"what now", "what's next", "×ž×” ×¢×›×©×™×•", "×ž×” ×”×©×œ×‘ ×”×‘×"}
-_TIME_LEFT_KEYWORDS = {"×›×ž×” ×–×ž×Ÿ × ×©××¨", "×–×ž×Ÿ × ×©××¨", "time left", "how much time left"}
+_NEXT_KEYWORDS = {"next", "קדימה", "הבא"}
+_PREV_KEYWORDS = {"back", "prev", "previous", "אחורה", "חזור"}
+_WHAT_NOW_KEYWORDS = {"what now", "what's next", "מה עכשיו", "מה השלב הבא"}
+_TIME_LEFT_KEYWORDS = {"כמה זמן נשאר", "זמן נשאר", "time left", "how much time left"}
+_DISPLAY_QUERY_COMMANDS = {
+    "what now",
+    "what now?",
+    "what's next",
+    "what's next?",
+    "next",
+    "next step",
+    "מה עכשיו",
+    "מה השלב הבא",
+    "שלב הבא",
+    }
+_COMPLETION_COMMANDS = {
+    "done",
+    "completed",
+    "i added it",
+    "i finished",
+    "שמתי",
+    "הוספתי",
+    "סיימתי",
+}
+_HE_COMPLETION_PREFIXES = (
+    "שמתי",
+    "הוספתי",
+    "סיימתי",
+)
 _HE_CUP_TO_GRAMS_PATTERN = re.compile(
     r"^\s*\u05db\u05de\u05d4\s+\u05d6\u05d4"
     r"(?:\s+(\d+(?:\.\d+)?))?\s+(\u05db\u05d5\u05e1(?:\u05d5\u05ea)?)\s+(.+?)\s+"
@@ -68,6 +92,141 @@ def _has_keyword(text: str, keywords: set[str]) -> bool:
 
 def _detect_lang(text: str) -> str:
     return "he" if re.search(r"[\u0590-\u05FF]", text) else "en"
+
+
+def _normalize_command_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Cf")
+    normalized = normalized.strip().lower()
+    normalized = normalized.strip(" \t\r\n.,!?\"'`")
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip()
+
+
+def _is_display_query_command(text: str) -> bool:
+    return _normalize_command_text(text) in _DISPLAY_QUERY_COMMANDS
+
+
+def _is_completion_command(text: str) -> bool:
+    normalized = _normalize_command_text(text)
+    if normalized in _COMPLETION_COMMANDS:
+        return True
+
+    return any(
+        normalized == prefix or normalized.startswith(f"{prefix} ")
+        for prefix in _HE_COMPLETION_PREFIXES
+    )
+
+
+def _build_completion_message(lang: str) -> str:
+    if lang == "he":
+        return "\u05e1\u05d9\u05d9\u05de\u05ea \u05d0\u05ea \u05db\u05dc \u05d4\u05de\u05ea\u05db\u05d5\u05df."
+    return "You completed the recipe."
+
+
+def _format_english_unit(unit: str, amount: float) -> str:
+    normalized = unit.strip().lower()
+    if normalized in {"g", "ml", ""}:
+        return unit
+    if normalized == "unit":
+        return ""
+    if amount == 1:
+        return unit
+
+    irregular = {
+        "cup": "cups",
+        "tbsp": "tbsp",
+        "tsp": "tsp",
+    }
+    if normalized in irregular:
+        return irregular[normalized]
+    if normalized.endswith("s"):
+        return unit
+    return f"{unit}s"
+
+
+def _format_english_ingredient_name(name: str, amount: float, unit: str) -> str:
+    if unit.strip().lower() != "unit" or amount == 1 or name.endswith("s"):
+        return name
+    return f"{name}s"
+
+
+def _build_ingredient_instruction(ingredient: Ingredient, lang: str) -> str:
+    amount_text = _format_amount(ingredient.amount)
+    if lang == "he":
+        ingredient_name = _hebrew_ingredient_label(ingredient.name)
+        if ingredient.unit.strip().lower() == "unit":
+            return f"\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3 {amount_text} {ingredient_name}."
+        unit_text = _hebrew_unit_label(ingredient.unit, ingredient.amount)
+        return (
+            f"\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3 "
+            f"{amount_text} {unit_text} {ingredient_name}."
+        )
+
+    unit_text = _format_english_unit(ingredient.unit, ingredient.amount)
+    ingredient_name = _format_english_ingredient_name(
+        ingredient.name,
+        ingredient.amount,
+        ingredient.unit,
+    )
+    if unit_text:
+        return f"Add {amount_text} {unit_text} of {ingredient_name}."
+    return f"Add {amount_text} {ingredient_name}."
+
+
+def _normalize_guided_progress(session: Session, recipe: Recipe) -> bool:
+    while True:
+        if session.current_section_index >= len(recipe.sections):
+            session.current_phase = "steps"
+            session.current_item_index = 0
+            return True
+
+        section = recipe.sections[session.current_section_index]
+        if session.current_phase == "ingredients":
+            if session.current_item_index < len(section.ingredients):
+                return False
+            session.current_phase = "steps"
+            session.current_item_index = 0
+            continue
+
+        if session.current_item_index < len(section.steps):
+            return False
+        session.current_section_index += 1
+        session.current_phase = "ingredients"
+        session.current_item_index = 0
+
+
+def _resolve_current_guided_item(
+    session: Session,
+    recipe: Recipe,
+) -> tuple[str, Ingredient | Step] | None:
+    if _normalize_guided_progress(session, recipe):
+        return None
+
+    section = recipe.sections[session.current_section_index]
+    if session.current_phase == "ingredients":
+        return "ingredients", section.ingredients[session.current_item_index]
+    return "steps", section.steps[session.current_item_index]
+
+
+def _current_guided_answer(session: Session, recipe: Recipe, lang: str) -> str:
+    current_item = _resolve_current_guided_item(session, recipe)
+    if current_item is None:
+        return _build_completion_message(lang)
+
+    phase, item = current_item
+    if phase == "ingredients":
+        return _build_ingredient_instruction(item, lang)
+    return item.text
+
+
+def _advance_guided_progress(session: Session, recipe: Recipe, lang: str) -> str:
+    current_item = _resolve_current_guided_item(session, recipe)
+    if current_item is None:
+        return _build_completion_message(lang)
+
+    session.current_item_index += 1
+    return _current_guided_answer(session, recipe, lang)
 
 
 def _build_hebrew_conversion_answer(text: str) -> str | None:
@@ -472,10 +631,6 @@ def process_ask(session: Session, recipe: Recipe, text: str) -> tuple[str, list[
     if recipe_ingredient_answer is not None:
         return recipe_ingredient_answer, actions, session
 
-    progression_answer = _build_hebrew_progression_answer(text, recipe, session.current_step)
-    if progression_answer is not None:
-        return progression_answer, actions, session
-
     target_system = _detect_hebrew_recipe_conversion_target(text)
     if target_system is not None:
         answer = _build_hebrew_recipe_conversion_answer(recipe, target_system)
@@ -516,21 +671,12 @@ def process_ask(session: Session, recipe: Recipe, text: str) -> tuple[str, list[
         answer = _build_timer_started_answer(timer_label, formatted, lang)
         return answer, actions, session
 
-    if _has_keyword(lowered, _NEXT_KEYWORDS):
-        if recipe.steps:
-            session.current_step = min(session.current_step + 1, len(recipe.steps))
-        actions.append(
-            Action(type=ActionType.NEXT_STEP, payload={"current_step": session.current_step})
-        )
-        answer = _get_current_step_text(recipe, session.current_step, lang)
+    if _is_display_query_command(text):
+        answer = _current_guided_answer(session, recipe, lang)
         return answer, actions, session
 
-    if _has_keyword(lowered, _PREV_KEYWORDS):
-        session.current_step = max(session.current_step - 1, 1)
-        actions.append(
-            Action(type=ActionType.PREV_STEP, payload={"current_step": session.current_step})
-        )
-        answer = _get_current_step_text(recipe, session.current_step, lang)
+    if _is_completion_command(text):
+        answer = _advance_guided_progress(session, recipe, lang)
         return answer, actions, session
 
     seconds = parse_timer_seconds(lowered)
@@ -662,16 +808,11 @@ def process_ask(session: Session, recipe: Recipe, text: str) -> tuple[str, list[
             return f"\u05e0\u05e9\u05d0\u05e8\u05d5 {formatted}.", actions, session
         return f"Time left: {formatted}.", actions, session
 
-    if _has_keyword(lowered, _WHAT_NOW_KEYWORDS):
-        answer = _get_current_step_text(recipe, session.current_step, lang)
-        return answer, actions, session
-
     if needs_cup_conversion(lowered):
         answer = build_cup_conversion_answer(lowered)
         if answer is None:
-            answer = _get_current_step_text(recipe, session.current_step, lang)
+            answer = _current_guided_answer(session, recipe, lang)
         return answer, actions, session
 
-    answer = _get_current_step_text(recipe, session.current_step, lang)
+    answer = _current_guided_answer(session, recipe, lang)
     return answer, actions, session
-

@@ -1,9 +1,32 @@
 from fastapi.testclient import TestClient
 
 from app.main import app, seed_sample_recipe
-from app.models import Ingredient, Recipe, Step
+from app.models import Ingredient, Recipe, RecipeSection, Step
+from app.services.conversion_catalog import catalog
 from app.services.convert import convert_ingredient, convert_recipe
 from app.store import store
+
+
+def make_recipe(
+    *,
+    recipe_id: str,
+    title: str,
+    servings: int,
+    ingredients: list[Ingredient],
+    steps: list[Step] | None = None,
+) -> Recipe:
+    return Recipe(
+        id=recipe_id,
+        title=title,
+        servings=servings,
+        sections=[
+            RecipeSection(
+                name="Main",
+                ingredients=ingredients,
+                steps=steps or [],
+            )
+        ],
+    )
 
 
 def setup_function() -> None:
@@ -86,6 +109,49 @@ def test_convert_known_volume_unit_returns_structured_result() -> None:
     assert converted.grams is not None
 
 
+def test_pasta_catalog_aliases_and_display_names_work_in_both_languages() -> None:
+    assert catalog.get_ingredient_key("pasta") == "pasta"
+    assert catalog.get_ingredient_key("Pasta") == "pasta"
+    assert catalog.get_ingredient_key("\u05e4\u05e1\u05d8\u05d4") == "pasta"
+
+    recipe = make_recipe(
+        recipe_id="recipe-pasta-display",
+        title="Pasta Display",
+        servings=2,
+        ingredients=[Ingredient(name="pasta", amount=400, unit="g")],
+    )
+
+    hebrew_result = convert_recipe(recipe, target_system="metric", language="he")
+    english_result = convert_recipe(recipe, target_system="metric", language="en")
+
+    assert hebrew_result.items[0].ingredient == "\u05e4\u05e1\u05d8\u05d4"
+    assert english_result.items[0].ingredient == "pasta"
+
+
+def test_mushroom_pasta_recipe_conversion_in_hebrew_resolves_all_catalog_ingredients() -> None:
+    client = TestClient(app)
+    recipe_id = "recipe-mushroom-cream-pasta"
+
+    response = client.post(
+        f"/recipes/{recipe_id}/convert",
+        json={"target_system": "metric", "language": "he"},
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    items_by_key = {item["resolved_ingredient_key"]: item for item in payload["items"]}
+
+    assert None not in items_by_key
+    assert items_by_key["pasta"]["ingredient"] == "\u05e4\u05e1\u05d8\u05d4"
+    assert items_by_key["mushroom"]["ingredient"] == "\u05e4\u05d8\u05e8\u05d9\u05d5\u05ea"
+    assert items_by_key["cream"]["ingredient"] == "\u05e9\u05de\u05e0\u05ea"
+    assert items_by_key["parmesan"]["ingredient"] == "\u05e4\u05e8\u05de\u05d6\u05df"
+    assert (
+        items_by_key["black_pepper"]["ingredient"]
+        == "\u05e4\u05dc\u05e4\u05dc \u05e9\u05d7\u05d5\u05e8"
+    )
+
+
 def test_egg_without_safe_rule_is_not_force_converted() -> None:
     converted = convert_ingredient("egg", 2.0, "unit")
 
@@ -153,8 +219,8 @@ def test_unknown_ingredient_does_not_crash() -> None:
 
 
 def test_convert_recipe_returns_item_for_each_ingredient() -> None:
-    recipe = Recipe(
-        id="recipe-123",
+    recipe = make_recipe(
+        recipe_id="recipe-123",
         title="Simple Cake",
         servings=4,
         ingredients=[
@@ -162,7 +228,6 @@ def test_convert_recipe_returns_item_for_each_ingredient() -> None:
             Ingredient(name="sugar", amount=2, unit="tbsp"),
             Ingredient(name="egg", amount=2, unit="unit"),
         ],
-        steps=[],
     )
 
     result = convert_recipe(recipe)
@@ -172,15 +237,14 @@ def test_convert_recipe_returns_item_for_each_ingredient() -> None:
 
 
 def test_convert_recipe_preserves_non_convertible_ingredient() -> None:
-    recipe = Recipe(
-        id="recipe-egg-safe",
+    recipe = make_recipe(
+        recipe_id="recipe-egg-safe",
         title="Egg Safe Fallback",
         servings=2,
         ingredients=[
             Ingredient(name="flour", amount=1, unit="cup"),
             Ingredient(name="egg", amount=2, unit="unit"),
         ],
-        steps=[],
     )
 
     result = convert_recipe(recipe)
@@ -193,8 +257,8 @@ def test_convert_recipe_preserves_non_convertible_ingredient() -> None:
 
 
 def test_convert_recipe_metric_normalizes_all_safe_ingredients() -> None:
-    recipe = Recipe(
-        id="recipe-metric-normalize",
+    recipe = make_recipe(
+        recipe_id="recipe-metric-normalize",
         title="Metric Normalization",
         servings=4,
         ingredients=[
@@ -203,7 +267,6 @@ def test_convert_recipe_metric_normalizes_all_safe_ingredients() -> None:
             Ingredient(name="milk", amount=1, unit="cup"),
             Ingredient(name="egg", amount=2, unit="unit"),
         ],
-        steps=[],
     )
 
     # TDD note: once supported, call convert_recipe(..., target_system="metric").
@@ -227,8 +290,8 @@ def test_convert_recipe_metric_normalizes_all_safe_ingredients() -> None:
 
 
 def test_convert_recipe_volume_normalizes_all_safe_ingredients() -> None:
-    recipe = Recipe(
-        id="recipe-volume-normalize",
+    recipe = make_recipe(
+        recipe_id="recipe-volume-normalize",
         title="Volume Normalization",
         servings=4,
         ingredients=[
@@ -237,7 +300,6 @@ def test_convert_recipe_volume_normalizes_all_safe_ingredients() -> None:
             Ingredient(name="milk", amount=240, unit="ml"),
             Ingredient(name="egg", amount=2, unit="unit"),
         ],
-        steps=[],
     )
 
     # TDD note: once supported, call convert_recipe(..., target_system="volume").
@@ -282,8 +344,8 @@ def test_convert_recipe_endpoint_hebrew_language_labels() -> None:
 
 
 def test_convert_recipe_metric_hebrew_returns_consistent_hebrew_view() -> None:
-    recipe = Recipe(
-        id="recipe-hebrew-view",
+    recipe = make_recipe(
+        recipe_id="recipe-hebrew-view",
         title="Basic Pancakes",
         servings=2,
         ingredients=[

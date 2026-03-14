@@ -217,6 +217,64 @@
         "cup": 210
       }
     },
+    "pasta": {
+      "display_name_he": "\u05e4\u05e1\u05d8\u05d4",
+      "display_name_en": "pasta",
+      "aliases_he": [
+        "\u05e4\u05e1\u05d8\u05d4"
+      ],
+      "aliases_en": [
+        "pasta"
+      ],
+      "grams_per_unit": {}
+    },
+    "mushroom": {
+      "display_name_he": "\u05e4\u05d8\u05e8\u05d9\u05d5\u05ea",
+      "display_name_en": "mushroom",
+      "aliases_he": [
+        "\u05e4\u05d8\u05e8\u05d9\u05d4",
+        "\u05e4\u05d8\u05e8\u05d9\u05d5\u05ea"
+      ],
+      "aliases_en": [
+        "mushroom",
+        "mushrooms"
+      ],
+      "grams_per_unit": {}
+    },
+    "cream": {
+      "display_name_he": "\u05e9\u05de\u05e0\u05ea",
+      "display_name_en": "cream",
+      "aliases_he": [
+        "\u05e9\u05de\u05e0\u05ea"
+      ],
+      "aliases_en": [
+        "cream"
+      ],
+      "grams_per_unit": {}
+    },
+    "parmesan": {
+      "display_name_he": "\u05e4\u05e8\u05de\u05d6\u05df",
+      "display_name_en": "parmesan",
+      "aliases_he": [
+        "\u05e4\u05e8\u05de\u05d6\u05df"
+      ],
+      "aliases_en": [
+        "parmesan",
+        "parmesan cheese"
+      ],
+      "grams_per_unit": {}
+    },
+    "black_pepper": {
+      "display_name_he": "\u05e4\u05dc\u05e4\u05dc \u05e9\u05d7\u05d5\u05e8",
+      "display_name_en": "black pepper",
+      "aliases_he": [
+        "\u05e4\u05dc\u05e4\u05dc \u05e9\u05d7\u05d5\u05e8"
+      ],
+      "aliases_en": [
+        "black pepper"
+      ],
+      "grams_per_unit": {}
+    },
     "salt": {
       "display_name_he": "מלח",
       "display_name_en": "salt",

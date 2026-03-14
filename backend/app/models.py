@@ -20,12 +20,25 @@ class Step(BaseModel):
     default_timer_seconds: int | None = None
 
 
+class RecipeSection(BaseModel):
+    name: str
+    ingredients: list[Ingredient] = Field(default_factory=list)
+    steps: list[Step] = Field(default_factory=list)
+
+
 class Recipe(BaseModel):
     id: str
     title: str
     servings: int
-    ingredients: list[Ingredient]
-    steps: list[Step]
+    sections: list[RecipeSection] = Field(default_factory=list)
+
+    @property
+    def ingredients(self) -> list[Ingredient]:
+        return [ingredient for section in self.sections for ingredient in section.ingredients]
+
+    @property
+    def steps(self) -> list[Step]:
+        return [step for section in self.sections for step in section.steps]
 
 
 class ConvertedIngredient(BaseModel):
@@ -95,11 +108,19 @@ class PendingTimerProposal(BaseModel):
 class Session(BaseModel):
     id: str
     recipe_id: str
-    current_step: int = 1
+    current_section_index: int = 0
+    current_phase: str = "ingredients"
+    current_item_index: int = 0
     active_timers: list[Timer] = Field(default_factory=list)
     pending_timer: PendingTimerProposal | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def current_step(self) -> int:
+        if self.current_phase == "steps":
+            return self.current_item_index + 1
+        return 1
 
 
 class ActionType(str, Enum):
