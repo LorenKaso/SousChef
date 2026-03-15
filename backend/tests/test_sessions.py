@@ -6,12 +6,40 @@ from fastapi.testclient import TestClient
 from app.db import init_db
 from app.main import app, seed_sample_recipe
 from app.models import Ingredient, Recipe, RecipeSection, Step, Timer
+from app.services.rag_service import RagService
 from app.store import store
 
 HE_WHAT_NOW = "\u05de\u05d4 \u05e2\u05db\u05e9\u05d9\u05d5"
 HE_NEXT_STEP = "\u05e9\u05dc\u05d1 \u05d4\u05d1\u05d0"
 HE_DONE = "\u05e9\u05de\u05ea\u05d9"
 TIME_LEFT_TEXT = "time left"
+
+
+class KeywordEmbedder:
+    def __init__(self) -> None:
+        self.model_name = "test-keyword-embedder"
+        self._features = [
+            "mushroom",
+            "pasta",
+            "cake",
+            "chocolate",
+            "flour",
+            "sugar",
+            "cream",
+            "parmesan",
+            "simmer",
+            "פסטה",
+            "שמנת",
+            "פרמזן",
+            "רוטב",
+        ]
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [self.embed_query(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        lowered = text.lower()
+        return [float(lowered.count(feature)) for feature in self._features]
 
 
 def setup_function() -> None:
@@ -29,6 +57,14 @@ def _start_session(client: TestClient, recipe_id: str) -> str:
 def _add_recipe(recipe: Recipe) -> str:
     store.add_recipe(recipe)
     return recipe.id
+
+
+def _configure_test_rag_service() -> None:
+    store.rag_service = RagService(
+        recipe_service=store.recipe_service,
+        session_service=store.session_service,
+        embedder=KeywordEmbedder(),
+    )
 
 
 def test_query_commands_do_not_advance_guided_progress() -> None:
@@ -58,6 +94,29 @@ def test_query_commands_do_not_advance_guided_progress() -> None:
     next_payload = next_response.json()
     assert next_payload["answer"] == first_payload["answer"]
     assert next_payload["session"]["current_item_index"] == 0
+
+
+def test_english_next_advances_progression_while_what_now_stays_read_only() -> None:
+    client = TestClient(app)
+    recipe_id = client.get("/recipes").json()[0]["id"]
+    session_id = _start_session(client, recipe_id)
+
+    show_response = client.post(f"/session/{session_id}/ask", json={"text": "what now"})
+    assert show_response.status_code == 200
+    assert show_response.json()["answer"] == "Add 1 cup of flour."
+    assert show_response.json()["session"]["current_item_index"] == 0
+
+    next_response = client.post(f"/session/{session_id}/ask", json={"text": "next"})
+    assert next_response.status_code == 200
+    next_payload = next_response.json()
+    assert next_payload["answer"] == "Add 1 cup of milk."
+    assert next_payload["session"]["current_item_index"] == 1
+
+    repeat_response = client.post(f"/session/{session_id}/ask", json={"text": "what's next"})
+    assert repeat_response.status_code == 200
+    repeat_payload = repeat_response.json()
+    assert repeat_payload["answer"] == "Add 1 cup of milk."
+    assert repeat_payload["session"]["current_item_index"] == 1
 
 
 def test_hebrew_completion_command_advances_in_api_flow() -> None:
@@ -379,3 +438,86 @@ def test_time_left_english_response_shape() -> None:
 
     answer = ask_response.json()["answer"]
     assert re.search(r"^Time left: \d+ (?:seconds|minutes|hours)\.$", answer)
+
+
+def test_command_routing_still_uses_deterministic_progression() -> None:
+    _configure_test_rag_service()
+    client = TestClient(app)
+
+    recipe_id = client.get("/recipes").json()[0]["id"]
+    session_id = _start_session(client, recipe_id)
+
+    response = client.post(f"/session/{session_id}/ask", json={"text": HE_DONE})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["answer"] == "צריך להוסיף 1 כוס חלב."
+    assert payload["session"]["current_item_index"] == 1
+
+
+def test_main_ask_routes_english_recipe_question_to_grounded_rag_answer() -> None:
+    _configure_test_rag_service()
+    client = TestClient(app)
+
+    session_id = _start_session(client, "recipe-mushroom-cream-pasta")
+    response = client.post(f"/session/{session_id}/ask", json={"text": "When do I add cream?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert (
+        payload["answer"]
+        == "You add the cream in the Sauce and Serving section, together with parmesan and black pepper."
+    )
+    assert payload["actions"] == []
+    assert payload["session"]["current_phase"] == "ingredients"
+    assert payload["session"]["current_item_index"] == 0
+
+
+def test_main_ask_routes_hebrew_recipe_question_to_grounded_rag_answer() -> None:
+    _configure_test_rag_service()
+    client = TestClient(app)
+
+    session_id = _start_session(client, "recipe-mushroom-cream-pasta")
+    response = client.post(f"/session/{session_id}/ask", json={"text": "כמה פסטה יש במתכון?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["answer"] == "במתכון יש 400 גרם פסטה."
+    assert payload["actions"] == []
+
+
+def test_main_ask_uses_session_aware_rag_answering() -> None:
+    _configure_test_rag_service()
+    client = TestClient(app)
+
+    session_id = _start_session(client, "recipe-mushroom-cream-pasta")
+    session = store.sessions[session_id]
+    session.current_section_index = 1
+    session.current_phase = "steps"
+    store.sessions[session_id] = session
+
+    response = client.post(f"/session/{session_id}/ask", json={"text": "מה יש ברוטב?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["answer"] == "בחלק של הרוטב וההגשה יש פטריות, שמנת, חמאה, פרמזן ופלפל שחור."
+    assert payload["actions"] == []
+    assert payload["session"]["current_section_index"] == 1
+    assert payload["session"]["current_phase"] == "steps"
+
+
+def test_main_ask_routes_what_goes_in_the_sauce_to_rag_instead_of_progression() -> None:
+    _configure_test_rag_service()
+    client = TestClient(app)
+
+    session_id = _start_session(client, "recipe-mushroom-cream-pasta")
+    response = client.post(f"/session/{session_id}/ask", json={"text": "what goes in the sauce?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert (
+        payload["answer"]
+        == "The sauce and serving section includes mushroom, cream, butter, parmesan, and black pepper."
+    )
+    assert payload["actions"] == []
+    assert payload["session"]["current_phase"] == "ingredients"
+    assert payload["session"]["current_item_index"] == 0

@@ -72,6 +72,11 @@ def ask(session_id: str, payload: AskRequest) -> AskResponse:
     if recipe is None:
         raise HTTPException(status_code=404, detail="Recipe not found")
 
-    answer, actions, updated_session = process_ask(session, recipe, payload.text)
+    answer, actions, updated_session = process_ask(
+        session,
+        recipe,
+        payload.text,
+        rag_service=store.rag_service,
+    )
     store.session_service.update_session(updated_session)
     return AskResponse(answer=answer, actions=actions, session=updated_session)

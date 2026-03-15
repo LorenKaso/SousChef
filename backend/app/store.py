@@ -5,6 +5,7 @@ from collections.abc import Iterable, Iterator, MutableMapping
 from .models import Recipe, Session
 from .repositories.recipe_repository import RecipeRepository
 from .repositories.session_repository import SessionRepository
+from .services.rag_service import RagService
 from .services.recipe_service import RecipeService
 from .services.session_service import SessionService
 
@@ -72,6 +73,10 @@ class StoreFacade:
         self.session_repository = SessionRepository()
         self.recipe_service = RecipeService(self.recipe_repository)
         self.session_service = SessionService(self.session_repository)
+        self.rag_service = RagService(
+            recipe_service=self.recipe_service,
+            session_service=self.session_service,
+        )
         self.recipes = _RecipeMapping(self.recipe_repository)
         self.sessions = _SessionMapping(self.session_repository)
 
@@ -81,9 +86,12 @@ class StoreFacade:
     def clear(self) -> None:
         self.session_service.clear()
         self.recipe_service.clear()
+        self.rag_service.invalidate_index()
 
     def add_recipe(self, recipe: Recipe) -> Recipe:
-        return self.recipe_service.add_recipe(recipe)
+        saved = self.recipe_service.add_recipe(recipe)
+        self.rag_service.invalidate_index()
+        return saved
 
     def list_recipes(self) -> Iterable[Recipe]:
         return self.recipe_service.list_recipes()

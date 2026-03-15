@@ -45,6 +45,10 @@ class RecipeRetriever:
         embeddings = self.embedder.embed_texts([chunk.text for chunk in chunks])
         self.vector_store.add(chunks, embeddings)
 
+    def clear(self) -> None:
+        self._indexed_chunks = []
+        self.vector_store.clear()
+
     def retrieve(
         self,
         query: str,

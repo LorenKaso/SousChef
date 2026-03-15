@@ -18,6 +18,10 @@ _SECTION_INGREDIENTS_PATTERN = re.compile(
     r"what\s+is\s+in\s+the\s+(?P<section>.+?)\??$",
     re.IGNORECASE,
 )
+_SECTION_INGREDIENTS_ALT_PATTERN = re.compile(
+    r"what\s+goes\s+in\s+the\s+(?P<section>.+?)\??$",
+    re.IGNORECASE,
+)
 _HE_AMOUNT_PATTERNS = (
     re.compile(r"^\s*כמה\s+(?P<ingredient>.+?)\s+יש\s+במתכון\??\s*$"),
     re.compile(r"^\s*כמה\s+(?P<ingredient>.+?)\s+צריך(?:ים)?\??\s*$"),
@@ -53,35 +57,62 @@ class GroundedAnswer(BaseModel):
 
 
 class RagAnswerBuilder:
+    def supports_query(self, query: str) -> bool:
+        return self._detect_question_type(query) is not None
+
     def build(self, query: str, retrieval: RetrievalResponse) -> GroundedAnswer:
         lowered_query = query.strip().lower()
         is_hebrew = _is_hebrew_text(query)
+        question_type = self._detect_question_type(query)
 
-        ingredient_amount = self._extract_ingredient_amount(
-            lowered_query,
-            retrieval.results,
-            is_hebrew=is_hebrew,
-        )
-        if ingredient_amount is not None:
-            return ingredient_amount
+        if question_type == "ingredient_amount":
+            ingredient_amount = self._extract_ingredient_amount(
+                lowered_query,
+                retrieval.results,
+                is_hebrew=is_hebrew,
+            )
+            if ingredient_amount is not None:
+                return ingredient_amount
 
-        when_to_add = self._extract_when_to_add(
-            lowered_query,
-            retrieval.results,
-            is_hebrew=is_hebrew,
-        )
-        if when_to_add is not None:
-            return when_to_add
+        if question_type == "when_to_add":
+            when_to_add = self._extract_when_to_add(
+                lowered_query,
+                retrieval.results,
+                is_hebrew=is_hebrew,
+            )
+            if when_to_add is not None:
+                return when_to_add
 
-        section_contents = self._extract_section_contents(
-            lowered_query,
-            retrieval.results,
-            is_hebrew=is_hebrew,
-        )
-        if section_contents is not None:
-            return section_contents
+        if question_type == "section_ingredients":
+            section_contents = self._extract_section_contents(
+                lowered_query,
+                retrieval.results,
+                is_hebrew=is_hebrew,
+            )
+            if section_contents is not None:
+                return section_contents
 
         return self._fallback(retrieval.results, is_hebrew=is_hebrew)
+
+    def _detect_question_type(self, query: str) -> str | None:
+        stripped = query.strip()
+        lowered = stripped.lower()
+        patterns = (
+            ("ingredient_amount", _AMOUNT_PATTERNS),
+            ("when_to_add", (_WHEN_ADD_PATTERN,)),
+            ("section_ingredients", (_SECTION_INGREDIENTS_PATTERN, _SECTION_INGREDIENTS_ALT_PATTERN)),
+        )
+        hebrew_patterns = (
+            ("ingredient_amount", _HE_AMOUNT_PATTERNS),
+            ("when_to_add", (_HE_WHEN_ADD_PATTERN,)),
+            ("section_ingredients", _HE_SECTION_INGREDIENTS_PATTERNS),
+        )
+
+        active_patterns = hebrew_patterns if _is_hebrew_text(stripped) else patterns
+        for question_type, question_patterns in active_patterns:
+            if any(pattern.match(lowered) for pattern in question_patterns):
+                return question_type
+        return None
 
     def _extract_ingredient_amount(
         self,
@@ -185,7 +216,11 @@ class RagAnswerBuilder:
         is_hebrew: bool,
     ) -> GroundedAnswer | None:
         match = None
-        patterns = _HE_SECTION_INGREDIENTS_PATTERNS if is_hebrew else (_SECTION_INGREDIENTS_PATTERN,)
+        patterns = (
+            _HE_SECTION_INGREDIENTS_PATTERNS
+            if is_hebrew
+            else (_SECTION_INGREDIENTS_PATTERN, _SECTION_INGREDIENTS_ALT_PATTERN)
+        )
         for pattern in patterns:
             match = pattern.match(query)
             if match is not None:

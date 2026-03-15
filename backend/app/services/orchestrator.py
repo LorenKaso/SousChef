@@ -4,6 +4,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from math import ceil
 from ..models import Action, ActionType, Ingredient, PendingTimerProposal, Recipe, Session, Step, Timer
+from .rag_service import RagService
 from .convert import convert_ingredient, convert_recipe
 from .conversion_catalog import catalog
 from .conversion import build_cup_conversion_answer, needs_cup_conversion, parse_timer_seconds
@@ -18,8 +19,6 @@ _DISPLAY_QUERY_COMMANDS = {
     "what now?",
     "what's next",
     "what's next?",
-    "next",
-    "next step",
     "מה עכשיו",
     "מה השלב הבא",
     "שלב הבא",
@@ -29,6 +28,8 @@ _COMPLETION_COMMANDS = {
     "completed",
     "i added it",
     "i finished",
+    "next",
+    "next step",
     "שמתי",
     "הוספתי",
     "סיימתי",
@@ -614,7 +615,13 @@ def format_duration(seconds: int, lang: str) -> str:
     return f"{hours} hours"
 
 
-def process_ask(session: Session, recipe: Recipe, text: str) -> tuple[str, list[Action], Session]:
+def process_ask(
+    session: Session,
+    recipe: Recipe,
+    text: str,
+    *,
+    rag_service: RagService | None = None,
+) -> tuple[str, list[Action], Session]:
     lowered = text.lower()
     lang = _detect_lang(text)
     actions: list[Action] = []
@@ -813,6 +820,10 @@ def process_ask(session: Session, recipe: Recipe, text: str) -> tuple[str, list[
         if answer is None:
             answer = _current_guided_answer(session, recipe, lang)
         return answer, actions, session
+
+    if rag_service is not None and rag_service.supports_question(text):
+        grounded = rag_service.answer_question(text, session_id=session.id)
+        return grounded.answer, actions, session
 
     answer = _current_guided_answer(session, recipe, lang)
     return answer, actions, session

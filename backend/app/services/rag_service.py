@@ -52,6 +52,9 @@ class RagService:
         context = self._build_context(recipe_id=recipe_id, session_id=session_id)
         return self.retriever.retrieve(query, limit=limit, context=context)
 
+    def supports_question(self, query: str) -> bool:
+        return self.answer_builder.supports_query(query)
+
     def answer_question(
         self,
         query: str,
@@ -67,6 +70,9 @@ class RagService:
             session_id=session_id,
         )
         return self.answer_builder.build(query, retrieval)
+
+    def invalidate_index(self) -> None:
+        self.retriever.clear()
 
     def _build_context(
         self,

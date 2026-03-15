@@ -238,6 +238,25 @@ def test_grounded_answer_formats_section_ingredients_question() -> None:
     assert answer.sources
 
 
+def test_grounded_answer_formats_section_ingredients_question_with_goes_in_variant() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+
+    answer = rag_service.answer_question(
+        "What goes in the sauce?",
+        recipe_id="recipe-mushroom-cream-pasta",
+    )
+
+    assert answer.answer_type == "section_ingredients"
+    assert (
+        answer.answer
+        == "The sauce and serving section includes mushroom, cream, butter, parmesan, and black pepper."
+    )
+    assert answer.sources
+
+
 def test_grounded_answer_formats_hebrew_ingredient_amount_question() -> None:
     rag_service = RagService(
         recipe_service=store.recipe_service,
