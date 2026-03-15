@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ..rag.answer_builder import GroundedAnswer, RagAnswerBuilder
 from ..rag.chunking import RecipeChunk, chunk_recipe
 from ..rag.embeddings import DEFAULT_EMBEDDING_MODEL, EmbeddingProvider, SentenceTransformerEmbedder
 from ..rag.retrieval import RecipeRetriever, RetrievalContext, RetrievalResponse
@@ -16,6 +17,7 @@ class RagService:
         session_service: SessionService | None = None,
         embedder: EmbeddingProvider | None = None,
         retriever: RecipeRetriever | None = None,
+        answer_builder: RagAnswerBuilder | None = None,
     ) -> None:
         self.recipe_service = recipe_service or RecipeService()
         self.session_service = session_service or SessionService()
@@ -24,6 +26,7 @@ class RagService:
             embedder=self.embedder,
             vector_store=FaissVectorStore(),
         )
+        self.answer_builder = answer_builder or RagAnswerBuilder()
 
     def build_chunks(self) -> list[RecipeChunk]:
         chunks: list[RecipeChunk] = []
@@ -48,6 +51,22 @@ class RagService:
             self.rebuild_index()
         context = self._build_context(recipe_id=recipe_id, session_id=session_id)
         return self.retriever.retrieve(query, limit=limit, context=context)
+
+    def answer_question(
+        self,
+        query: str,
+        *,
+        limit: int = 4,
+        recipe_id: str | None = None,
+        session_id: str | None = None,
+    ) -> GroundedAnswer:
+        retrieval = self.retrieve(
+            query,
+            limit=limit,
+            recipe_id=recipe_id,
+            session_id=session_id,
+        )
+        return self.answer_builder.build(query, retrieval)
 
     def _build_context(
         self,

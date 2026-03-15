@@ -181,6 +181,165 @@ def test_session_context_prefers_current_section_and_phase() -> None:
     assert response.results[0].chunk.metadata["section_index"] == 1
 
 
+def test_grounded_answer_formats_when_to_add_question_from_session_context() -> None:
+    session = store.session_service.start_session("recipe-mushroom-cream-pasta")
+    session.current_section_index = 1
+    session.current_phase = "steps"
+    store.sessions[session.id] = session
+
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        session_service=store.session_service,
+        embedder=KeywordEmbedder(),
+    )
+
+    answer = rag_service.answer_question("When do I add cream?", session_id=session.id)
+
+    assert answer.answer_type == "when_to_add"
+    assert (
+        answer.answer
+        == "You add the cream in the Sauce and Serving section, together with parmesan and black pepper."
+    )
+    assert answer.sources
+
+
+def test_grounded_answer_formats_ingredient_amount_question() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+
+    answer = rag_service.answer_question(
+        "How much pasta is in the recipe?",
+        recipe_id="recipe-mushroom-cream-pasta",
+    )
+
+    assert answer.answer_type == "ingredient_amount"
+    assert answer.answer == "This recipe uses 400 g of pasta."
+    assert answer.sources
+
+
+def test_grounded_answer_formats_section_ingredients_question() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+
+    answer = rag_service.answer_question(
+        "What is in the sauce and serving?",
+        recipe_id="recipe-mushroom-cream-pasta",
+    )
+
+    assert answer.answer_type == "section_ingredients"
+    assert (
+        answer.answer
+        == "The sauce and serving section includes mushroom, cream, butter, parmesan, and black pepper."
+    )
+    assert answer.sources
+
+
+def test_grounded_answer_formats_hebrew_ingredient_amount_question() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+
+    answer = rag_service.answer_question(
+        "כמה פסטה יש במתכון?",
+        recipe_id="recipe-mushroom-cream-pasta",
+    )
+
+    assert answer.answer_type == "ingredient_amount"
+    assert answer.answer == "במתכון יש 400 גרם פסטה."
+    assert answer.sources
+
+
+def test_grounded_answer_formats_hebrew_when_to_add_question() -> None:
+    session = store.session_service.start_session("recipe-mushroom-cream-pasta")
+    session.current_section_index = 1
+    session.current_phase = "steps"
+    store.sessions[session.id] = session
+
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        session_service=store.session_service,
+        embedder=KeywordEmbedder(),
+    )
+
+    answer = rag_service.answer_question("מתי מוסיפים שמנת?", session_id=session.id)
+
+    assert answer.answer_type == "when_to_add"
+    assert (
+        answer.answer
+        == "מוסיפים את השמנת בחלק של הרוטב וההגשה, יחד עם פרמזן ופלפל שחור."
+    )
+    assert answer.sources
+
+
+def test_grounded_answer_formats_hebrew_section_ingredients_question() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+
+    answer = rag_service.answer_question(
+        "מה יש ברוטב?",
+        recipe_id="recipe-mushroom-cream-pasta",
+    )
+
+    assert answer.answer_type == "section_ingredients"
+    assert answer.answer == "בחלק של הרוטב וההגשה יש פטריות, שמנת, חמאה, פרמזן ופלפל שחור."
+    assert answer.sources
+
+
+def test_grounded_answer_formats_hebrew_section_name_variant() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+
+    answer = rag_service.answer_question(
+        "מה יש בחלק של הרוטב וההגשה?",
+        recipe_id="recipe-mushroom-cream-pasta",
+    )
+
+    assert answer.answer_type == "section_ingredients"
+    assert answer.answer == "בחלק של הרוטב וההגשה יש פטריות, שמנת, חמאה, פרמזן ופלפל שחור."
+    assert answer.sources
+
+
+def test_grounded_answer_falls_back_to_clean_chunk_when_not_confident() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+
+    answer = rag_service.answer_question(
+        "Tell me something useful about the batter.",
+        recipe_id="recipe-basic-pancakes",
+    )
+
+    assert answer.answer_type == "fallback_chunk"
+    assert "Relevant note" in answer.answer
+    assert answer.sources
+
+
+def test_grounded_answer_hebrew_fallback_remains_grounded() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+
+    answer = rag_service.answer_question(
+        "תגיד משהו מועיל על הבלילה",
+        recipe_id="recipe-basic-pancakes",
+    )
+
+    assert answer.answer_type == "fallback_chunk"
+    assert "הערה רלוונטית" in answer.answer
+    assert answer.sources
+
+
 def test_retriever_handles_empty_index() -> None:
     retriever = RecipeRetriever(embedder=KeywordEmbedder())
 
