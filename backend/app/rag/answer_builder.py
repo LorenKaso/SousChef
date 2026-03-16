@@ -56,14 +56,33 @@ class GroundedAnswer(BaseModel):
     sources: list[str] = Field(default_factory=list)
 
 
+class QueryIntent(BaseModel):
+    question_type: str
+    requested_section: str | None = None
+
+
 class RagAnswerBuilder:
     def supports_query(self, query: str) -> bool:
-        return self._detect_question_type(query) is not None
+        return self.analyze_query(query) is not None
+
+    def analyze_query(self, query: str) -> QueryIntent | None:
+        question_type = self._detect_question_type(query)
+        if question_type is None:
+            return None
+
+        requested_section = None
+        if question_type == "section_ingredients":
+            requested_section = self._extract_requested_section(query)
+        return QueryIntent(
+            question_type=question_type,
+            requested_section=requested_section,
+        )
 
     def build(self, query: str, retrieval: RetrievalResponse) -> GroundedAnswer:
         lowered_query = query.strip().lower()
         is_hebrew = _is_hebrew_text(query)
-        question_type = self._detect_question_type(query)
+        intent = self.analyze_query(query)
+        question_type = intent.question_type if intent is not None else None
 
         if question_type == "ingredient_amount":
             ingredient_amount = self._extract_ingredient_amount(
@@ -112,6 +131,20 @@ class RagAnswerBuilder:
         for question_type, question_patterns in active_patterns:
             if any(pattern.match(lowered) for pattern in question_patterns):
                 return question_type
+        return None
+
+    def _extract_requested_section(self, query: str) -> str | None:
+        lowered = query.strip().lower()
+        patterns = (
+            _HE_SECTION_INGREDIENTS_PATTERNS
+            if _is_hebrew_text(query)
+            else (_SECTION_INGREDIENTS_PATTERN, _SECTION_INGREDIENTS_ALT_PATTERN)
+        )
+        for pattern in patterns:
+            match = pattern.match(lowered)
+            if match is not None:
+                section = match.group("section").strip().rstrip("?")
+                return section or None
         return None
 
     def _extract_ingredient_amount(

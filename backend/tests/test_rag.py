@@ -7,6 +7,7 @@ from app.main import app, seed_sample_recipe
 from app.models import Ingredient, Recipe, RecipeSection, Step
 from app.rag.chunking import chunk_recipe
 from app.rag.retrieval import RecipeRetriever
+from app.services.llm_service import LLMService, build_grounded_answer_prompt
 from app.services.rag_service import RagService
 from app.store import store
 
@@ -32,6 +33,16 @@ class KeywordEmbedder:
     def embed_query(self, text: str) -> list[float]:
         lowered = text.lower()
         return [float(lowered.count(feature)) for feature in self._features]
+
+
+class FakeLLMProvider:
+    def __init__(self) -> None:
+        self.model_name = "fake-llm"
+        self.prompts: list[str] = []
+
+    def generate(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return "Grounded answer from fake LLM."
 
 
 def setup_function() -> None:
@@ -311,6 +322,44 @@ def test_grounded_answer_formats_hebrew_section_ingredients_question() -> None:
     assert answer.sources
 
 
+def test_hebrew_section_question_overrides_current_section_bias() -> None:
+    session = store.session_service.start_session("recipe-mushroom-cream-pasta")
+    session.current_section_index = 0
+    session.current_phase = "ingredients"
+    store.sessions[session.id] = session
+
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        session_service=store.session_service,
+        embedder=KeywordEmbedder(),
+    )
+    response = rag_service.retrieve(
+        "\u05de\u05d4 \u05d9\u05e9 \u05d1\u05e8\u05d5\u05d8\u05d1?",
+        session_id=session.id,
+    )
+
+    assert response.context is not None
+    assert response.context.suppress_session_bias is True
+    assert response.context.requested_section == "\u05e8\u05d5\u05d8\u05d1"
+    assert response.results
+    assert response.results[0].chunk.chunk_type == "ingredients"
+    assert response.results[0].chunk.metadata["section_name"] == "Sauce and Serving"
+
+    answer = rag_service.answer_question(
+        "\u05de\u05d4 \u05d9\u05e9 \u05d1\u05e8\u05d5\u05d8\u05d1?",
+        session_id=session.id,
+    )
+
+    assert answer.answer_type == "section_ingredients"
+    assert (
+        answer.answer
+        == "\u05d1\u05d7\u05dc\u05e7 \u05e9\u05dc \u05d4\u05e8\u05d5\u05d8\u05d1 "
+        "\u05d5\u05d4\u05d4\u05d2\u05e9\u05d4 \u05d9\u05e9 \u05e4\u05d8\u05e8\u05d9\u05d5\u05ea, "
+        "\u05e9\u05de\u05e0\u05ea, \u05d7\u05de\u05d0\u05d4, \u05e4\u05e8\u05de\u05d6\u05df "
+        "\u05d5\u05e4\u05dc\u05e4\u05dc \u05e9\u05d7\u05d5\u05e8."
+    )
+
+
 def test_grounded_answer_formats_hebrew_section_name_variant() -> None:
     rag_service = RagService(
         recipe_service=store.recipe_service,
@@ -367,3 +416,94 @@ def test_retriever_handles_empty_index() -> None:
     assert response.query == "find cake"
     assert response.context is None
     assert response.results == []
+
+
+def test_llm_prompt_builder_includes_question_context_and_grounding_rules() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+    retrieval = rag_service.retrieve(
+        "How much pasta is in the recipe?",
+        recipe_id="recipe-mushroom-cream-pasta",
+    )
+
+    prompt = build_grounded_answer_prompt(
+        question="How much pasta is in the recipe?",
+        retrieval=retrieval,
+        answer_language="en",
+    )
+
+    assert "Use only the provided context." in prompt
+    assert "Do not invent recipe details" in prompt
+    assert "How much pasta is in the recipe?" in prompt
+    assert "recipe-mushroom-cream-pasta" in prompt
+    assert "400 g pasta" in prompt
+
+
+def test_llm_service_returns_safe_fallback_when_context_is_missing() -> None:
+    llm_service = LLMService()
+    retriever = RecipeRetriever(embedder=KeywordEmbedder())
+    retrieval = retriever.retrieve("How much pasta is in the recipe?")
+
+    answer = llm_service.generate_grounded_answer(
+        question="How much pasta is in the recipe?",
+        retrieval=retrieval,
+    )
+
+    assert answer.answer_type == "llm_no_context"
+    assert answer.sources == []
+    assert "enough grounded recipe context" in answer.answer
+
+
+def test_rag_service_exposes_optional_llm_answer_path() -> None:
+    provider = FakeLLMProvider()
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+        llm_service=LLMService(provider),
+    )
+
+    answer = rag_service.answer_question_with_llm(
+        "How much pasta is in the recipe?",
+        recipe_id="recipe-mushroom-cream-pasta",
+    )
+
+    assert answer.answer_type == "llm_grounded"
+    assert answer.answer == "Grounded answer from fake LLM."
+    assert answer.sources
+    assert provider.prompts
+
+
+def test_rag_service_falls_back_to_deterministic_answer_when_llm_is_disabled() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+        llm_service=LLMService(),
+    )
+
+    answer = rag_service.answer_question(
+        "How much pasta is in the recipe?",
+        recipe_id="recipe-mushroom-cream-pasta",
+        use_llm=True,
+    )
+
+    assert answer.answer_type == "ingredient_amount"
+    assert answer.answer == "This recipe uses 400 g of pasta."
+
+
+def test_rag_service_falls_back_to_deterministic_answer_when_context_is_missing() -> None:
+    provider = FakeLLMProvider()
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+        llm_service=LLMService(provider),
+    )
+
+    answer = rag_service.answer_question_with_llm(
+        "How much dragonfruit is in the recipe?",
+        recipe_id="recipe-missing",
+    )
+
+    assert answer.answer_type == "no_match"
+    assert "grounded recipe answer" in answer.answer

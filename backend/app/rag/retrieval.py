@@ -17,6 +17,10 @@ class RetrievalContext(BaseModel):
     recipe_id: str | None = None
     section_index: int | None = None
     phase: str | None = None
+    question_type: str | None = None
+    requested_section: str | None = None
+    prefer_chunk_type: str | None = None
+    suppress_session_bias: bool = False
 
 
 class RetrievalResponse(BaseModel):
@@ -79,18 +83,67 @@ class RecipeRetriever:
     def _build_score_adjuster(context: RetrievalContext | None):
         if context is None:
             return None
-        if context.section_index is None and context.phase is None:
+        if (
+            context.section_index is None
+            and context.phase is None
+            and context.requested_section is None
+            and context.prefer_chunk_type is None
+        ):
             return None
 
         def adjust(chunk: RecipeChunk, base_score: float) -> float:
             score = base_score
-            if context.section_index is not None:
+            if not context.suppress_session_bias and context.section_index is not None:
                 chunk_section = chunk.metadata.get("section_index")
                 if chunk_section == context.section_index:
                     score += 0.15
 
-            if context.phase is not None and chunk.chunk_type == context.phase:
+            if not context.suppress_session_bias and context.phase is not None and chunk.chunk_type == context.phase:
                 score += 0.1
+            if context.prefer_chunk_type is not None and chunk.chunk_type == context.prefer_chunk_type:
+                score += 0.15
+            if context.requested_section is not None:
+                section_name = chunk.metadata.get("section_name")
+                if isinstance(section_name, str) and _section_matches(section_name, context.requested_section):
+                    score += 0.35
             return score
 
         return adjust
+
+
+def _section_matches(section_name: str, requested_section: str) -> bool:
+    section_lower = section_name.lower()
+    requested_lower = requested_section.lower()
+    if requested_lower in section_lower:
+        return True
+
+    translated_sections = {
+        "Batter": "הבלילה",
+        "Cooking": "הבישול",
+        "Cake": "העוגה",
+        "Topping": "הציפוי",
+        "Pasta": "הפסטה",
+        "Sauce and Serving": "הרוטב וההגשה",
+    }
+    translated = translated_sections.get(section_name)
+    if translated is None:
+        return False
+
+    normalized_requested = _normalize_hebrew_section_query(requested_section)
+    normalized_translated = _normalize_hebrew_section_query(translated)
+    return (
+        normalized_requested in normalized_translated
+        or normalized_translated in normalized_requested
+    )
+
+
+def _normalize_hebrew_section_query(value: str) -> str:
+    import re
+
+    normalized = value.strip()
+    normalized = re.sub(r"^חלק\s+של\s+", "", normalized)
+    normalized = re.sub(r"^ה", "", normalized)
+    normalized = normalized.replace(" ו", " ")
+    normalized = normalized.replace("-", " ")
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip()

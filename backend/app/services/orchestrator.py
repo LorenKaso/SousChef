@@ -822,7 +822,7 @@ def process_ask(
         return answer, actions, session
 
     if rag_service is not None and rag_service.supports_question(text):
-        grounded = rag_service.answer_question(text, session_id=session.id)
+        grounded = rag_service.answer_question(text, session_id=session.id, use_llm=True)
         return grounded.answer, actions, session
 
     answer = _current_guided_answer(session, recipe, lang)

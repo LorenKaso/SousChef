@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.db import init_db
 from app.main import app, seed_sample_recipe
 from app.models import Ingredient, Recipe, RecipeSection, Step, Timer
+from app.services.llm_service import LLMService
 from app.services.rag_service import RagService
 from app.store import store
 
@@ -42,6 +43,16 @@ class KeywordEmbedder:
         return [float(lowered.count(feature)) for feature in self._features]
 
 
+class FakeLLMProvider:
+    def __init__(self) -> None:
+        self.model_name = "fake-llm"
+        self.prompts: list[str] = []
+
+    def generate(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return "LLM grounded answer."
+
+
 def setup_function() -> None:
     init_db()
     store.clear()
@@ -59,12 +70,15 @@ def _add_recipe(recipe: Recipe) -> str:
     return recipe.id
 
 
-def _configure_test_rag_service() -> None:
+def _configure_test_rag_service(*, with_llm: bool = False) -> FakeLLMProvider | None:
+    provider = FakeLLMProvider() if with_llm else None
     store.rag_service = RagService(
         recipe_service=store.recipe_service,
         session_service=store.session_service,
         embedder=KeywordEmbedder(),
+        llm_service=LLMService(provider) if with_llm else LLMService(),
     )
+    return provider
 
 
 def test_query_commands_do_not_advance_guided_progress() -> None:
@@ -505,6 +519,36 @@ def test_main_ask_uses_session_aware_rag_answering() -> None:
     assert payload["session"]["current_phase"] == "steps"
 
 
+def test_main_ask_hebrew_section_question_overrides_current_section_preference() -> None:
+    _configure_test_rag_service()
+    client = TestClient(app)
+
+    session_id = _start_session(client, "recipe-mushroom-cream-pasta")
+    session = store.sessions[session_id]
+    session.current_section_index = 0
+    session.current_phase = "ingredients"
+    store.sessions[session_id] = session
+
+    response = client.post(
+        f"/session/{session_id}/ask",
+        json={"text": "\u05de\u05d4 \u05d9\u05e9 \u05d1\u05e8\u05d5\u05d8\u05d1?"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert (
+        payload["answer"]
+        == "\u05d1\u05d7\u05dc\u05e7 \u05e9\u05dc \u05d4\u05e8\u05d5\u05d8\u05d1 "
+        "\u05d5\u05d4\u05d4\u05d2\u05e9\u05d4 \u05d9\u05e9 \u05e4\u05d8\u05e8\u05d9\u05d5\u05ea, "
+        "\u05e9\u05de\u05e0\u05ea, \u05d7\u05de\u05d0\u05d4, \u05e4\u05e8\u05de\u05d6\u05df "
+        "\u05d5\u05e4\u05dc\u05e4\u05dc \u05e9\u05d7\u05d5\u05e8."
+    )
+    assert payload["actions"] == []
+    assert payload["session"]["current_section_index"] == 0
+    assert payload["session"]["current_phase"] == "ingredients"
+    assert payload["session"]["current_item_index"] == 0
+
+
 def test_main_ask_routes_what_goes_in_the_sauce_to_rag_instead_of_progression() -> None:
     _configure_test_rag_service()
     client = TestClient(app)
@@ -521,3 +565,34 @@ def test_main_ask_routes_what_goes_in_the_sauce_to_rag_instead_of_progression() 
     assert payload["actions"] == []
     assert payload["session"]["current_phase"] == "ingredients"
     assert payload["session"]["current_item_index"] == 0
+
+
+def test_main_ask_can_use_grounded_llm_answer_for_recipe_questions() -> None:
+    provider = _configure_test_rag_service(with_llm=True)
+    client = TestClient(app)
+
+    session_id = _start_session(client, "recipe-mushroom-cream-pasta")
+    response = client.post(f"/session/{session_id}/ask", json={"text": "When do I add cream?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["answer"] == "LLM grounded answer."
+    assert payload["actions"] == []
+    assert provider is not None
+    assert provider.prompts
+
+
+def test_main_ask_falls_back_safely_when_llm_is_disabled() -> None:
+    _configure_test_rag_service(with_llm=False)
+    client = TestClient(app)
+
+    session_id = _start_session(client, "recipe-mushroom-cream-pasta")
+    response = client.post(f"/session/{session_id}/ask", json={"text": "When do I add cream?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert (
+        payload["answer"]
+        == "You add the cream in the Sauce and Serving section, together with parmesan and black pepper."
+    )
+    assert payload["actions"] == []
