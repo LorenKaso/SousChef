@@ -53,6 +53,14 @@ class FakeLLMProvider:
         return "LLM grounded answer."
 
 
+class FakeFailingLLMProvider:
+    def __init__(self) -> None:
+        self.model_name = "fake-failing-llm"
+
+    def generate(self, prompt: str) -> str:
+        raise RuntimeError("provider failure")
+
+
 def setup_function() -> None:
     init_db()
     store.clear()
@@ -72,11 +80,14 @@ def _add_recipe(recipe: Recipe) -> str:
 
 def _configure_test_rag_service(*, with_llm: bool = False) -> FakeLLMProvider | None:
     provider = FakeLLMProvider() if with_llm else None
+    llm_service = LLMService(provider) if with_llm else LLMService()
+    if not with_llm:
+        llm_service.provider = None
     store.rag_service = RagService(
         recipe_service=store.recipe_service,
         session_service=store.session_service,
         embedder=KeywordEmbedder(),
-        llm_service=LLMService(provider) if with_llm else LLMService(),
+        llm_service=llm_service,
     )
     return provider
 
@@ -584,6 +595,27 @@ def test_main_ask_can_use_grounded_llm_answer_for_recipe_questions() -> None:
 
 def test_main_ask_falls_back_safely_when_llm_is_disabled() -> None:
     _configure_test_rag_service(with_llm=False)
+    client = TestClient(app)
+
+    session_id = _start_session(client, "recipe-mushroom-cream-pasta")
+    response = client.post(f"/session/{session_id}/ask", json={"text": "When do I add cream?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert (
+        payload["answer"]
+        == "You add the cream in the Sauce and Serving section, together with parmesan and black pepper."
+    )
+    assert payload["actions"] == []
+
+
+def test_main_ask_falls_back_safely_when_llm_provider_fails() -> None:
+    store.rag_service = RagService(
+        recipe_service=store.recipe_service,
+        session_service=store.session_service,
+        embedder=KeywordEmbedder(),
+        llm_service=LLMService(FakeFailingLLMProvider()),
+    )
     client = TestClient(app)
 
     session_id = _start_session(client, "recipe-mushroom-cream-pasta")

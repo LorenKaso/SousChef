@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+import app.services.llm_service as llm_service_module
 from app.db import init_db
 from app.main import app, seed_sample_recipe
 from app.models import Ingredient, Recipe, RecipeSection, Step
 from app.rag.chunking import chunk_recipe
 from app.rag.retrieval import RecipeRetriever
-from app.services.llm_service import LLMService, build_grounded_answer_prompt
+from app.services.llm_service import (
+    GeminiProvider,
+    LLMService,
+    build_grounded_answer_prompt,
+    build_gemini_provider_from_env,
+)
 from app.services.rag_service import RagService
 from app.store import store
 
@@ -43,6 +49,50 @@ class FakeLLMProvider:
     def generate(self, prompt: str) -> str:
         self.prompts.append(prompt)
         return "Grounded answer from fake LLM."
+
+
+class FakeFailingLLMProvider:
+    def __init__(self) -> None:
+        self.model_name = "fake-failing-llm"
+
+    def generate(self, prompt: str) -> str:
+        raise RuntimeError("provider failure")
+
+
+class FakeGeminiResponse:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class FakeGeminiModels:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def generate_content(self, **kwargs):
+        self.calls.append(kwargs)
+        return FakeGeminiResponse("Grounded answer from Gemini.")
+
+
+class FakeGeminiClient:
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = kwargs
+        self.models = FakeGeminiModels()
+
+
+class FakeThinkingConfig:
+    def __init__(self, *, thinking_budget: int) -> None:
+        self.thinking_budget = thinking_budget
+
+
+class FakeGenerateContentConfig:
+    def __init__(self, **kwargs) -> None:
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
+class FakeGeminiTypes:
+    GenerateContentConfig = FakeGenerateContentConfig
+    ThinkingConfig = FakeThinkingConfig
 
 
 def setup_function() -> None:
@@ -441,8 +491,75 @@ def test_llm_prompt_builder_includes_question_context_and_grounding_rules() -> N
     assert "400 g pasta" in prompt
 
 
+def test_gemini_provider_can_be_built_from_env(monkeypatch) -> None:
+    created_clients: list[FakeGeminiClient] = []
+
+    def client_factory(**kwargs):
+        client = FakeGeminiClient(**kwargs)
+        created_clients.append(client)
+        return client
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-test-model")
+
+    provider = build_gemini_provider_from_env(
+        client_factory=client_factory,
+        types_module=FakeGeminiTypes,
+    )
+
+    assert provider is not None
+    assert provider.model_name == "gemini-test-model"
+    assert created_clients
+    assert created_clients[0].kwargs == {"api_key": "test-key"}
+
+
+def test_llm_service_is_unavailable_without_gemini_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+
+    llm_service = LLMService()
+
+    assert llm_service.is_available() is False
+
+
+def test_gemini_provider_generates_grounded_answer_with_safe_prompt() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+    retrieval = rag_service.retrieve(
+        "How much pasta is in the recipe?",
+        recipe_id="recipe-mushroom-cream-pasta",
+    )
+    client = FakeGeminiClient(api_key="test-key")
+
+    llm_service = LLMService(
+        GeminiProvider(
+            model_name="gemini-test-model",
+            api_key="test-key",
+            client=client,
+            types_module=FakeGeminiTypes,
+        )
+    )
+
+    answer = llm_service.generate_grounded_answer(
+        question="How much pasta is in the recipe?",
+        retrieval=retrieval,
+    )
+
+    assert answer.answer_type == "llm_grounded"
+    assert answer.answer == "Grounded answer from Gemini."
+    assert client.models.calls
+    assert "Use only the provided context." in str(client.models.calls[0]["contents"])
+    assert "Answer strictly from the retrieved recipe chunks." in str(client.models.calls[0]["contents"])
+    assert client.models.calls[0]["model"] == "gemini-test-model"
+    assert getattr(client.models.calls[0]["config"], "temperature") == 0.1
+    assert getattr(client.models.calls[0]["config"], "max_output_tokens") == 220
+
+
 def test_llm_service_returns_safe_fallback_when_context_is_missing() -> None:
     llm_service = LLMService()
+    llm_service.provider = None
     retriever = RecipeRetriever(embedder=KeywordEmbedder())
     retrieval = retriever.retrieve("How much pasta is in the recipe?")
 
@@ -475,11 +592,97 @@ def test_rag_service_exposes_optional_llm_answer_path() -> None:
     assert provider.prompts
 
 
-def test_rag_service_falls_back_to_deterministic_answer_when_llm_is_disabled() -> None:
+def test_default_rag_service_seeds_sample_recipes_for_standalone_usage() -> None:
+    store.clear()
+
+    rag_service = RagService(
+        embedder=KeywordEmbedder(),
+    )
+
+    answer = rag_service.answer_question(
+        "When do I add cream?",
+        recipe_id="recipe-mushroom-cream-pasta",
+        use_llm=False,
+    )
+
+    assert answer.answer_type == "when_to_add"
+    assert (
+        answer.answer
+        == "You add the cream in the Sauce and Serving section, together with parmesan and black pepper."
+    )
+    assert answer.sources
+
+
+def test_rag_service_initializes_default_llm_service_when_configured(monkeypatch) -> None:
+    monkeypatch.setattr(
+        llm_service_module,
+        "build_gemini_provider_from_env",
+        lambda **_: FakeLLMProvider(),
+    )
+
     rag_service = RagService(
         recipe_service=store.recipe_service,
         embedder=KeywordEmbedder(),
-        llm_service=LLMService(),
+    )
+
+    assert rag_service.llm_service is not None
+    assert rag_service.llm_service.is_available() is True
+
+
+def test_rag_service_default_wiring_uses_llm_path_with_use_llm_true(monkeypatch) -> None:
+    monkeypatch.setattr(
+        llm_service_module,
+        "build_gemini_provider_from_env",
+        lambda **_: FakeLLMProvider(),
+    )
+
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+
+    answer = rag_service.answer_question(
+        "How much pasta is in the recipe?",
+        recipe_id="recipe-mushroom-cream-pasta",
+        use_llm=True,
+    )
+
+    assert answer.answer_type == "llm_grounded"
+    assert answer.answer == "Grounded answer from fake LLM."
+
+
+def test_rag_service_default_wiring_falls_back_safely_when_provider_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        llm_service_module,
+        "build_gemini_provider_from_env",
+        lambda **_: None,
+    )
+
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+    )
+
+    assert rag_service.llm_service is not None
+    assert rag_service.llm_service.is_available() is False
+
+    answer = rag_service.answer_question(
+        "How much pasta is in the recipe?",
+        recipe_id="recipe-mushroom-cream-pasta",
+        use_llm=True,
+    )
+
+    assert answer.answer_type == "ingredient_amount"
+    assert answer.answer == "This recipe uses 400 g of pasta."
+
+
+def test_rag_service_falls_back_to_deterministic_answer_when_llm_is_disabled() -> None:
+    llm_service = LLMService()
+    llm_service.provider = None
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+        llm_service=llm_service,
     )
 
     answer = rag_service.answer_question(
@@ -507,3 +710,20 @@ def test_rag_service_falls_back_to_deterministic_answer_when_context_is_missing(
 
     assert answer.answer_type == "no_match"
     assert "grounded recipe answer" in answer.answer
+
+
+def test_rag_service_falls_back_to_deterministic_answer_when_provider_fails() -> None:
+    rag_service = RagService(
+        recipe_service=store.recipe_service,
+        embedder=KeywordEmbedder(),
+        llm_service=LLMService(FakeFailingLLMProvider()),
+    )
+
+    answer = rag_service.answer_question(
+        "How much pasta is in the recipe?",
+        recipe_id="recipe-mushroom-cream-pasta",
+        use_llm=True,
+    )
+
+    assert answer.answer_type == "ingredient_amount"
+    assert answer.answer == "This recipe uses 400 g of pasta."

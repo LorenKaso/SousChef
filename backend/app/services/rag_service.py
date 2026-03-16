@@ -4,6 +4,7 @@ from ..rag.answer_builder import GroundedAnswer, RagAnswerBuilder
 from ..rag.chunking import RecipeChunk, chunk_recipe
 from ..rag.embeddings import DEFAULT_EMBEDDING_MODEL, EmbeddingProvider, SentenceTransformerEmbedder
 from ..rag.retrieval import RecipeRetriever, RetrievalContext, RetrievalResponse
+from ..sample_data import ensure_sample_recipes
 from ..rag.vector_store import FaissVectorStore
 from .llm_service import LLMService
 from .recipe_service import RecipeService
@@ -23,13 +24,15 @@ class RagService:
     ) -> None:
         self.recipe_service = recipe_service or RecipeService()
         self.session_service = session_service or SessionService()
+        if recipe_service is None:
+            ensure_sample_recipes(self.recipe_service)
         self.embedder = embedder or SentenceTransformerEmbedder(DEFAULT_EMBEDDING_MODEL)
         self.retriever = retriever or RecipeRetriever(
             embedder=self.embedder,
             vector_store=FaissVectorStore(),
         )
         self.answer_builder = answer_builder or RagAnswerBuilder()
-        self.llm_service = llm_service
+        self.llm_service = llm_service if llm_service is not None else LLMService()
 
     def build_chunks(self) -> list[RecipeChunk]:
         chunks: list[RecipeChunk] = []
@@ -120,10 +123,13 @@ class RagService:
             return None
         if not llm_service.has_useful_context(retrieval):
             return None
-        return llm_service.generate_grounded_answer(
-            question=query,
-            retrieval=retrieval,
-        )
+        try:
+            return llm_service.generate_grounded_answer(
+                question=query,
+                retrieval=retrieval,
+            )
+        except Exception:
+            return None
 
     def _build_context(
         self,
