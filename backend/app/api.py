@@ -7,12 +7,15 @@ from .models import (
     AskResponse,
     ConvertRecipeNormalizedResponse,
     ConvertRecipeRequest,
+    ImportRecipeTextRequest,
+    ImportRecipeTextResponse,
     Recipe,
     Session,
     StartSessionRequest,
 )
 from .services.convert import convert_recipe_normalized
 from .services.orchestrator import process_ask
+from .services.recipe_import import import_recipe_from_text
 from .store import store
 
 
@@ -27,6 +30,17 @@ def health() -> dict[str, bool]:
 @router.post("/recipes", response_model=Recipe)
 def create_recipe(recipe: Recipe) -> Recipe:
     return store.recipe_service.add_recipe(recipe)
+
+
+@router.post("/recipes/import/text", response_model=ImportRecipeTextResponse)
+def import_recipe_text(payload: ImportRecipeTextRequest) -> ImportRecipeTextResponse:
+    imported = import_recipe_from_text(payload)
+    saved = store.add_recipe(imported.recipe)
+    return ImportRecipeTextResponse(
+        recipe=saved,
+        confidence=imported.confidence,
+        warnings=imported.warnings,
+    )
 
 
 @router.get("/recipes", response_model=list[Recipe])

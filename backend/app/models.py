@@ -148,3 +148,15 @@ class AskResponse(BaseModel):
     answer: str
     actions: list[Action]
     session: Session
+
+
+class ImportRecipeTextRequest(BaseModel):
+    raw_text: str
+    title: str | None = None
+    language_hint: DisplayLanguage | None = None
+
+
+class ImportRecipeTextResponse(BaseModel):
+    recipe: Recipe
+    confidence: str
+    warnings: list[str] = Field(default_factory=list)
