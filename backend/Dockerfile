@@ -9,7 +9,7 @@ ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 \
+    && apt-get install -y --no-install-recommends ffmpeg libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

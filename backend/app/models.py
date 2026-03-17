@@ -150,6 +150,57 @@ class AskResponse(BaseModel):
     session: Session
 
 
+class VoiceSessionState(str, Enum):
+    IDLE = "idle"
+    LISTENING = "listening"
+    PROCESSING = "processing"
+    SPEAKING = "speaking"
+    STOPPED = "stopped"
+
+
+class VoiceSession(BaseModel):
+    id: str
+    recipe_session_id: str
+    state: VoiceSessionState = VoiceSessionState.IDLE
+    last_transcript: str | None = None
+    last_answer: str | None = None
+    stt_model: str | None = None
+    tts_model: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class VoiceSessionStartRequest(BaseModel):
+    recipe_id: str
+
+
+class VoiceSessionStartResponse(BaseModel):
+    voice_session: VoiceSession
+    recipe_session: Session
+
+
+class VoiceSessionTurnRequest(BaseModel):
+    transcript_text: str | None = None
+    audio_base64: str | None = None
+    mime_type: str | None = None
+    language_hint: DisplayLanguage | None = None
+
+
+class VoiceSessionTurnResponse(BaseModel):
+    transcript: str
+    answer: str
+    actions: list[Action]
+    voice_session: VoiceSession
+    recipe_session: Session
+    audio_base64: str
+    audio_content_type: str
+    audio_encoding: str
+
+
+class VoiceSessionStopResponse(BaseModel):
+    voice_session: VoiceSession
+
+
 class ImportRecipeTextRequest(BaseModel):
     raw_text: str
     title: str | None = None

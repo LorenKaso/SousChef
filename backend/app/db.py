@@ -99,6 +99,19 @@ def init_db() -> None:
                 FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS voice_sessions (
+                id TEXT PRIMARY KEY,
+                recipe_session_id TEXT NOT NULL,
+                state TEXT NOT NULL,
+                last_transcript TEXT,
+                last_answer TEXT,
+                stt_model TEXT,
+                tts_model TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(recipe_session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+
             CREATE INDEX IF NOT EXISTS idx_recipe_sections_recipe
             ON recipe_sections(recipe_id, section_index);
 
@@ -113,5 +126,8 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_timers_session
             ON timers(session_id, started_at);
+
+            CREATE INDEX IF NOT EXISTS idx_voice_sessions_recipe_session
+            ON voice_sessions(recipe_session_id, updated_at);
             """
         )

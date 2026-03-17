@@ -12,6 +12,11 @@ from .models import (
     Recipe,
     Session,
     StartSessionRequest,
+    VoiceSessionStartRequest,
+    VoiceSessionStartResponse,
+    VoiceSessionStopResponse,
+    VoiceSessionTurnRequest,
+    VoiceSessionTurnResponse,
 )
 from .services.convert import convert_recipe_normalized
 from .services.orchestrator import process_ask
@@ -94,3 +99,24 @@ def ask(session_id: str, payload: AskRequest) -> AskResponse:
     )
     store.session_service.update_session(updated_session)
     return AskResponse(answer=answer, actions=actions, session=updated_session)
+
+
+@router.post("/voice/session/start", response_model=VoiceSessionStartResponse)
+def start_voice_session(payload: VoiceSessionStartRequest) -> VoiceSessionStartResponse:
+    return store.voice_orchestrator.start_voice_session(recipe_id=payload.recipe_id)
+
+
+@router.post("/voice/session/{voice_session_id}/turn", response_model=VoiceSessionTurnResponse)
+def voice_turn(
+    voice_session_id: str,
+    payload: VoiceSessionTurnRequest,
+) -> VoiceSessionTurnResponse:
+    return store.voice_orchestrator.process_turn(
+        voice_session_id=voice_session_id,
+        payload=payload,
+    )
+
+
+@router.post("/voice/session/{voice_session_id}/stop", response_model=VoiceSessionStopResponse)
+def stop_voice_session(voice_session_id: str) -> VoiceSessionStopResponse:
+    return store.voice_orchestrator.stop_voice_session(voice_session_id=voice_session_id)

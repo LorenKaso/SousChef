@@ -2,12 +2,17 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, MutableMapping
 
-from .models import Recipe, Session
+from .models import Recipe, Session, VoiceSession
 from .repositories.recipe_repository import RecipeRepository
 from .repositories.session_repository import SessionRepository
+from .repositories.voice_session_repository import VoiceSessionRepository
 from .services.rag_service import RagService
 from .services.recipe_service import RecipeService
 from .services.session_service import SessionService
+from .services.stt_service import STTService
+from .services.tts_service import TTSService
+from .services.voice_orchestrator import VoiceOrchestrator
+from .services.voice_session_service import VoiceSessionService
 
 
 class _RecipeMapping(MutableMapping[str, Recipe]):
@@ -67,23 +72,62 @@ class _SessionMapping(MutableMapping[str, Session]):
         return session
 
 
+class _VoiceSessionMapping(MutableMapping[str, VoiceSession]):
+    def __init__(self, repository: VoiceSessionRepository) -> None:
+        self.repository = repository
+
+    def __getitem__(self, key: str) -> VoiceSession:
+        voice_session = self.repository.get(key)
+        if voice_session is None:
+            raise KeyError(key)
+        return voice_session
+
+    def __setitem__(self, key: str, value: VoiceSession) -> None:
+        if key != value.id:
+            raise KeyError(key)
+        self.repository.upsert(value)
+
+    def __delitem__(self, key: str) -> None:
+        self.repository.delete(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return (voice_session.id for voice_session in self.repository.list())
+
+    def __len__(self) -> int:
+        return len(self.repository.list())
+
+
 class StoreFacade:
     def __init__(self) -> None:
         self.recipe_repository = RecipeRepository()
         self.session_repository = SessionRepository()
+        self.voice_session_repository = VoiceSessionRepository()
         self.recipe_service = RecipeService(self.recipe_repository)
         self.session_service = SessionService(self.session_repository)
+        self.voice_session_service = VoiceSessionService(self.voice_session_repository)
         self.rag_service = RagService(
             recipe_service=self.recipe_service,
             session_service=self.session_service,
         )
+        self.stt_service = STTService()
+        self.tts_service = TTSService()
+        self.voice_orchestrator = VoiceOrchestrator(
+            recipe_service=self.recipe_service,
+            session_service=self.session_service,
+            voice_session_service=self.voice_session_service,
+            rag_service=self.rag_service,
+            stt_service=self.stt_service,
+            tts_service=self.tts_service,
+        )
         self.recipes = _RecipeMapping(self.recipe_repository)
         self.sessions = _SessionMapping(self.session_repository)
+        self.voice_sessions = _VoiceSessionMapping(self.voice_session_repository)
 
     def is_empty(self) -> bool:
         return self.recipe_service.is_empty()
 
     def clear(self) -> None:
+        self.voice_session_service.clear()
         self.session_service.clear()
         self.recipe_service.clear()
         self.rag_service.invalidate_index()
