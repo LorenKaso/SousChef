@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 
@@ -207,6 +207,16 @@ class RagAnswerBuilder:
                 display_section = _format_section_name(section_name, is_hebrew=is_hebrew)
                 display_together = _format_ingredient_list(together, is_hebrew=is_hebrew) if together else None
                 ingredient_with_article = _prefix_hebrew_article(display_ingredient) if is_hebrew else display_ingredient
+                if _should_prefer_step_answer(section_name):
+                    return GroundedAnswer(
+                        answer=(
+                            f"מוסיפים את {ingredient_with_article} בשלב הזה: {sentence}"
+                            if is_hebrew
+                            else f"You add the {ingredient_name} in this step: {sentence}"
+                        ),
+                        answer_type="when_to_add",
+                        sources=[result.chunk.id],
+                    )
                 if isinstance(section_name, str) and together:
                     return GroundedAnswer(
                         answer=(
@@ -363,6 +373,15 @@ def _sentence_mentions_ingredient(sentence: str, ingredient_name: str) -> bool:
     if ingredient_name.lower() in sentence_lower:
         return True
 
+    normalized_sentence = _normalize_ingredient_phrase(sentence)
+    normalized_ingredient = _normalize_ingredient_phrase(ingredient_name)
+    if normalized_ingredient and normalized_ingredient in normalized_sentence:
+        return True
+    ingredient_tokens = set(normalized_ingredient.split())
+    sentence_tokens = set(normalized_sentence.split())
+    if ingredient_tokens and ingredient_tokens.issubset(sentence_tokens):
+        return True
+
     ingredient_key = catalog.get_ingredient_key(ingredient_name)
     if ingredient_key is None:
         return False
@@ -377,7 +396,30 @@ def _sentence_mentions_ingredient(sentence: str, ingredient_name: str) -> bool:
         value = ingredient_data.get(field)
         if isinstance(value, str):
             aliases.append(value)
-    return any(alias.lower() in sentence_lower for alias in aliases)
+    return any(_normalize_ingredient_phrase(alias) in normalized_sentence for alias in aliases)
+
+
+def _should_prefer_step_answer(section_name: object) -> bool:
+    if not isinstance(section_name, str):
+        return True
+    return section_name.strip().lower() in {"imported recipe", "main", "section"}
+
+
+def _normalize_ingredient_phrase(value: str) -> str:
+    normalized = value.lower().strip()
+    normalized = re.sub(r"[^\w\u0590-\u05FF\s]+", " ", normalized)
+    normalized = re.sub(r"\b(the|a|an)\b", " ", normalized)
+    normalized = re.sub(r"\bאת\b", " ", normalized)
+    normalized = re.sub(r"\bשל\b", " ", normalized)
+    normalized = re.sub(r"\bעם\b", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    tokens: list[str] = []
+    for token in normalized.split():
+        if _is_hebrew_text(token) and token.startswith("ה") and len(token) > 2:
+            token = token[1:]
+        tokens.append(token)
+    return " ".join(tokens)
 
 
 def _extract_companion_ingredients(sentence: str, ingredient_name: str) -> str | None:
