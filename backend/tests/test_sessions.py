@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+﻿from datetime import datetime, timedelta, timezone
 import re
 
 from fastapi.testclient import TestClient
@@ -99,6 +99,7 @@ def test_query_commands_do_not_advance_guided_progress() -> None:
 
     first_response = client.post(f"/session/{session_id}/ask", json={"text": HE_WHAT_NOW})
     assert first_response.status_code == 200
+    assert first_response.headers["content-type"] == "application/json; charset=utf-8"
     first_payload = first_response.json()
     assert (
         first_payload["answer"]
@@ -558,6 +559,21 @@ def test_main_ask_hebrew_section_question_overrides_current_section_preference()
     assert payload["session"]["current_section_index"] == 0
     assert payload["session"]["current_phase"] == "ingredients"
     assert payload["session"]["current_item_index"] == 0
+
+
+def test_main_ask_repairs_mojibake_hebrew_query_before_routing() -> None:
+    _configure_test_rag_service()
+    client = TestClient(app)
+
+    session_id = _start_session(client, "recipe-mushroom-cream-pasta")
+    response = client.post(
+        f"/session/{session_id}/ask",
+        json={"text": "×ž×” ×™×© ×‘×¨×•×˜×‘?"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["answer"] == "בחלק של הרוטב וההגשה יש פטריות, שמנת, חמאה, פרמזן ופלפל שחור."
 
 
 def test_main_ask_routes_what_goes_in_the_sauce_to_rag_instead_of_progression() -> None:

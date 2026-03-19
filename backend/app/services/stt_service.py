@@ -8,6 +8,7 @@ import tempfile
 from pydantic import BaseModel
 
 from ..models import DisplayLanguage
+from ..text_utils import repair_text_if_mojibake
 
 
 DEFAULT_STT_MODEL = "openai/whisper-large-v3-turbo"
@@ -53,7 +54,7 @@ class STTService:
     ) -> TranscriptionResult:
         if transcript_text is not None and transcript_text.strip():
             return TranscriptionResult(
-                text=transcript_text.strip(),
+                text=repair_text_if_mojibake(transcript_text.strip()),
                 provider_model=self.model_name,
                 language=language_hint.value if language_hint is not None else None,
             )
@@ -89,7 +90,7 @@ class STTService:
                 raise ValueError("Transcription returned empty text.")
 
             return TranscriptionResult(
-                text=text,
+                text=repair_text_if_mojibake(text),
                 provider_model=self.model_name,
                 language=language_hint.value if language_hint is not None else None,
             )

@@ -11,6 +11,7 @@ from ..models import (
     VoiceSessionTurnRequest,
     VoiceSessionTurnResponse,
 )
+from ..text_utils import repair_text_if_mojibake
 from .orchestrator import process_ask
 from .rag_service import RagService
 from .recipe_service import RecipeService
@@ -91,24 +92,26 @@ class VoiceOrchestrator:
             self.voice_session_service.update_session(voice_session)
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+        normalized_transcript = repair_text_if_mojibake(transcription.text)
         answer_text, actions, updated_recipe_session = process_ask(
             recipe_session,
             recipe,
-            transcription.text,
+            normalized_transcript,
             rag_service=self.rag_service,
         )
+        answer_text = repair_text_if_mojibake(answer_text)
         updated_recipe_session = self.session_service.update_session(updated_recipe_session)
 
         language = payload.language_hint or _detect_answer_language(answer_text)
         synthesized = self.tts_service.synthesize(text=answer_text, language=language)
 
         voice_session.state = VoiceSessionState.SPEAKING
-        voice_session.last_transcript = transcription.text
+        voice_session.last_transcript = normalized_transcript
         voice_session.last_answer = answer_text
         updated_voice_session = self.voice_session_service.update_session(voice_session)
 
         return VoiceSessionTurnResponse(
-            transcript=transcription.text,
+            transcript=normalized_transcript,
             answer=answer_text,
             actions=actions,
             voice_session=updated_voice_session,

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
@@ -22,6 +22,7 @@ def test_voice_session_start_creates_separate_voice_and_recipe_sessions() -> Non
     )
 
     assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json; charset=utf-8"
     payload = response.json()
     assert payload["voice_session"]["state"] == "listening"
     assert payload["voice_session"]["recipe_session_id"] == payload["recipe_session"]["id"]
@@ -43,6 +44,7 @@ def test_voice_turn_routes_through_existing_guided_flow_and_returns_tts_payload(
     )
 
     assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json; charset=utf-8"
     payload = response.json()
     assert payload["transcript"] == "what now"
     assert payload["voice_session"]["state"] == "speaking"
@@ -51,6 +53,25 @@ def test_voice_turn_routes_through_existing_guided_flow_and_returns_tts_payload(
     assert payload["audio_base64"]
     assert payload["audio_content_type"] == "text/plain; charset=utf-8"
     assert payload["audio_encoding"] == "base64"
+
+
+def test_voice_turn_repairs_mojibake_transcript_text_before_processing() -> None:
+    client = TestClient(app)
+    start = client.post(
+        "/voice/session/start",
+        json={"recipe_id": "recipe-mushroom-cream-pasta"},
+    )
+    voice_session_id = start.json()["voice_session"]["id"]
+
+    response = client.post(
+        f"/voice/session/{voice_session_id}/turn",
+        json={"transcript_text": "×ž×” ×¢×›×©×™×•?"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["transcript"] == "\u05de\u05d4 \u05e2\u05db\u05e9\u05d9\u05d5?"
+    assert payload["voice_session"]["last_transcript"] == "\u05de\u05d4 \u05e2\u05db\u05e9\u05d9\u05d5?"
 
 
 def test_voice_turn_accepts_audio_base64_when_stt_pipeline_is_available(monkeypatch) -> None:
@@ -66,7 +87,7 @@ def test_voice_turn_accepts_audio_base64_when_stt_pipeline_is_available(monkeypa
     def fake_pipeline(audio_path: str, *, generate_kwargs: dict[str, str]):
         captured["audio_path"] = audio_path
         captured["generate_kwargs"] = generate_kwargs
-        return {"text": "מה עכשיו?"}
+        return {"text": "\u05de\u05d4 \u05e2\u05db\u05e9\u05d9\u05d5?"}
 
     monkeypatch.setattr(store.stt_service, "_pipeline", None)
     monkeypatch.setattr(store.stt_service, "_build_pipeline", lambda: fake_pipeline)
@@ -78,8 +99,8 @@ def test_voice_turn_accepts_audio_base64_when_stt_pipeline_is_available(monkeypa
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["transcript"] == "מה עכשיו?"
-    assert payload["voice_session"]["last_transcript"] == "מה עכשיו?"
+    assert payload["transcript"] == "\u05de\u05d4 \u05e2\u05db\u05e9\u05d9\u05d5?"
+    assert payload["voice_session"]["last_transcript"] == "\u05de\u05d4 \u05e2\u05db\u05e9\u05d9\u05d5?"
     assert payload["voice_session"]["last_answer"]
     assert payload["voice_session"]["state"] == "speaking"
     assert str(captured["audio_path"]).endswith(".ogg")

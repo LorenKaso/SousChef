@@ -21,6 +21,7 @@ from .models import (
 from .services.convert import convert_recipe_normalized
 from .services.orchestrator import process_ask
 from .services.recipe_import import import_recipe_from_text
+from .text_utils import repair_text_if_mojibake
 from .store import store
 
 
@@ -91,14 +92,19 @@ def ask(session_id: str, payload: AskRequest) -> AskResponse:
     if recipe is None:
         raise HTTPException(status_code=404, detail="Recipe not found")
 
+    normalized_text = repair_text_if_mojibake(payload.text)
     answer, actions, updated_session = process_ask(
         session,
         recipe,
-        payload.text,
+        normalized_text,
         rag_service=store.rag_service,
     )
     store.session_service.update_session(updated_session)
-    return AskResponse(answer=answer, actions=actions, session=updated_session)
+    return AskResponse(
+        answer=repair_text_if_mojibake(answer),
+        actions=actions,
+        session=updated_session,
+    )
 
 
 @router.post("/voice/session/start", response_model=VoiceSessionStartResponse)
