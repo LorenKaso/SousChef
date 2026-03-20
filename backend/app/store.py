@@ -3,9 +3,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, MutableMapping
 
 from .models import Recipe, Session, VoiceSession
+from .repositories.favorite_repository import FavoriteRepository
 from .repositories.recipe_repository import RecipeRepository
 from .repositories.session_repository import SessionRepository
 from .repositories.voice_session_repository import VoiceSessionRepository
+from .services.favorite_service import FavoriteService
 from .services.rag_service import RagService
 from .services.recipe_service import RecipeService
 from .services.session_service import SessionService
@@ -102,8 +104,12 @@ class StoreFacade:
         self.recipe_repository = RecipeRepository()
         self.session_repository = SessionRepository()
         self.voice_session_repository = VoiceSessionRepository()
+        self.favorite_repository = FavoriteRepository()
         self.recipe_service = RecipeService(self.recipe_repository)
         self.session_service = SessionService(self.session_repository)
+        self.favorite_service = FavoriteService(
+            self.favorite_repository, self.recipe_repository
+        )
         self.voice_session_service = VoiceSessionService(self.voice_session_repository)
         self.rag_service = RagService(
             recipe_service=self.recipe_service,

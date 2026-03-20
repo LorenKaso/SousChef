@@ -7,6 +7,7 @@ from .models import (
     AskResponse,
     ConvertRecipeNormalizedResponse,
     ConvertRecipeRequest,
+    FavoriteEntry,
     ImportRecipeTextRequest,
     ImportRecipeTextResponse,
     Recipe,
@@ -123,6 +124,39 @@ def voice_turn(
     )
 
 
-@router.post("/voice/session/{voice_session_id}/stop", response_model=VoiceSessionStopResponse)
+@router.post(
+    "/voice/session/{voice_session_id}/stop",
+    response_model=VoiceSessionStopResponse,
+)
 def stop_voice_session(voice_session_id: str) -> VoiceSessionStopResponse:
-    return store.voice_orchestrator.stop_voice_session(voice_session_id=voice_session_id)
+    return store.voice_orchestrator.stop_voice_session(
+        voice_session_id=voice_session_id
+    )
+
+
+@router.post("/recipes/{recipe_id}/favorite", response_model=FavoriteEntry)
+def add_favorite(recipe_id: str) -> FavoriteEntry:
+    recipe = store.recipe_service.get_recipe(recipe_id)
+    if recipe is None:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    try:
+        return store.favorite_service.add_favorite(recipe_id)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Recipe is already a favorite")
+
+
+@router.delete("/recipes/{recipe_id}/favorite")
+def remove_favorite(recipe_id: str) -> dict[str, bool]:
+    recipe = store.recipe_service.get_recipe(recipe_id)
+    if recipe is None:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    try:
+        store.favorite_service.remove_favorite(recipe_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Recipe is not in favorites")
+    return {"ok": True}
+
+
+@router.get("/favorites", response_model=list[Recipe])
+def list_favorites() -> list[Recipe]:
+    return store.favorite_service.list_favorite_recipes()

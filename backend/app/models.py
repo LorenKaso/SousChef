@@ -211,3 +211,8 @@ class ImportRecipeTextResponse(BaseModel):
     recipe: Recipe
     confidence: str
     warnings: list[str] = Field(default_factory=list)
+
+
+class FavoriteEntry(BaseModel):
+    recipe_id: str
+    favorited_at: datetime

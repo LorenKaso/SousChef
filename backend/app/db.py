@@ -129,5 +129,14 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_voice_sessions_recipe_session
             ON voice_sessions(recipe_session_id, updated_at);
+
+            CREATE TABLE IF NOT EXISTS favorites (
+                recipe_id TEXT PRIMARY KEY,
+                favorited_at TEXT NOT NULL,
+                FOREIGN KEY(recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_favorites_favorited_at
+            ON favorites(favorited_at DESC);
             """
         )
