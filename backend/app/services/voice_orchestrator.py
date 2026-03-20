@@ -103,11 +103,17 @@ class VoiceOrchestrator:
         updated_recipe_session = self.session_service.update_session(updated_recipe_session)
 
         language = payload.language_hint or _detect_answer_language(answer_text)
-        synthesized = self.tts_service.synthesize(text=answer_text, language=language)
+        try:
+            synthesized = self.tts_service.synthesize(text=answer_text, language=language)
+        except RuntimeError as exc:
+            voice_session.state = VoiceSessionState.LISTENING
+            self.voice_session_service.update_session(voice_session)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
         voice_session.state = VoiceSessionState.SPEAKING
         voice_session.last_transcript = normalized_transcript
         voice_session.last_answer = answer_text
+        voice_session.tts_model = synthesized.provider_model
         updated_voice_session = self.voice_session_service.update_session(voice_session)
 
         return VoiceSessionTurnResponse(
