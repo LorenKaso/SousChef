@@ -17,6 +17,9 @@ class RecipeService:
     def get_recipe(self, recipe_id: str) -> Recipe | None:
         return self.repository.get(recipe_id)
 
+    def delete_recipe(self, recipe_id: str) -> bool:
+        return self.repository.delete(recipe_id)
+
     def is_empty(self) -> bool:
         return not self.repository.exists_any()
 

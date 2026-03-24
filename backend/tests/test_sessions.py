@@ -92,34 +92,49 @@ def _configure_test_rag_service(*, with_llm: bool = False) -> FakeLLMProvider | 
     return provider
 
 
-def test_query_commands_do_not_advance_guided_progress() -> None:
+def test_what_now_does_not_advance_but_next_step_does() -> None:
+    """מה עכשיו (what now) shows the current item without advancing.
+    שלב הבא / מה השלב הבא (next step) must advance to the next item.
+    """
     client = TestClient(app)
     recipe_id = client.get("/recipes").json()[0]["id"]
     session_id = _start_session(client, recipe_id)
 
-    first_response = client.post(f"/session/{session_id}/ask", json={"text": HE_WHAT_NOW})
+    first_response = client.post(
+        f"/session/{session_id}/ask", json={"text": HE_WHAT_NOW}
+    )
     assert first_response.status_code == 200
-    assert first_response.headers["content-type"] == "application/json; charset=utf-8"
-    first_payload = first_response.json()
     assert (
-        first_payload["answer"]
-        == "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3 1 \u05db\u05d5\u05e1 \u05e7\u05de\u05d7 \u05dc\u05d1\u05df."
+        first_response.headers["content-type"]
+        == "application/json; charset=utf-8"
+    )
+    first_payload = first_response.json()
+    # Batter section now uses flow mode; answer includes a "next" preview.
+    assert first_payload["answer"].startswith(
+        "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3"
+        " 1 \u05db\u05d5\u05e1 \u05e7\u05de\u05d7 \u05dc\u05d1\u05df."
     )
     assert first_payload["session"]["current_section_index"] == 0
-    assert first_payload["session"]["current_phase"] == "ingredients"
+    assert first_payload["session"]["current_phase"] == "flow"
     assert first_payload["session"]["current_item_index"] == 0
 
-    repeated_response = client.post(f"/session/{session_id}/ask", json={"text": HE_WHAT_NOW})
+    # Repeating "what now" must not advance — still item 0.
+    repeated_response = client.post(
+        f"/session/{session_id}/ask", json={"text": HE_WHAT_NOW}
+    )
     assert repeated_response.status_code == 200
     repeated_payload = repeated_response.json()
     assert repeated_payload["answer"] == first_payload["answer"]
     assert repeated_payload["session"]["current_item_index"] == 0
 
-    next_response = client.post(f"/session/{session_id}/ask", json={"text": HE_NEXT_STEP})
+    # "שלב הבא" (next step) must advance — now item 1.
+    next_response = client.post(
+        f"/session/{session_id}/ask", json={"text": HE_NEXT_STEP}
+    )
     assert next_response.status_code == 200
     next_payload = next_response.json()
-    assert next_payload["answer"] == first_payload["answer"]
-    assert next_payload["session"]["current_item_index"] == 0
+    assert next_payload["answer"] != first_payload["answer"]
+    assert next_payload["session"]["current_item_index"] == 1
 
 
 def test_english_next_advances_progression_while_what_now_stays_read_only() -> None:
@@ -129,19 +144,21 @@ def test_english_next_advances_progression_while_what_now_stays_read_only() -> N
 
     show_response = client.post(f"/session/{session_id}/ask", json={"text": "what now"})
     assert show_response.status_code == 200
-    assert show_response.json()["answer"] == "Add 1 cup of flour."
+    # Flow mode: answer includes "Next: ..." preview
+    assert show_response.json()["answer"].startswith("Add 1 cup of flour.")
     assert show_response.json()["session"]["current_item_index"] == 0
 
     next_response = client.post(f"/session/{session_id}/ask", json={"text": "next"})
     assert next_response.status_code == 200
     next_payload = next_response.json()
-    assert next_payload["answer"] == "Add 1 cup of milk."
+    # Flow order: flour(0) -> sugar(1) -> milk(2) -> step(3)
+    assert next_payload["answer"].startswith("Add 1 tbsp of sugar.")
     assert next_payload["session"]["current_item_index"] == 1
 
     repeat_response = client.post(f"/session/{session_id}/ask", json={"text": "what's next"})
     assert repeat_response.status_code == 200
     repeat_payload = repeat_response.json()
-    assert repeat_payload["answer"] == "Add 1 cup of milk."
+    assert repeat_payload["answer"].startswith("Add 1 tbsp of sugar.")
     assert repeat_payload["session"]["current_item_index"] == 1
 
 
@@ -153,24 +170,25 @@ def test_hebrew_completion_command_advances_in_api_flow() -> None:
     # Send Hebrew commands as JSON so the request body stays UTF-8 encoded.
     first_response = client.post(f"/session/{session_id}/ask", json={"text": HE_WHAT_NOW})
     assert first_response.status_code == 200
-    assert (
-        first_response.json()["answer"]
-        == "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3 1 \u05db\u05d5\u05e1 \u05e7\u05de\u05d7 \u05dc\u05d1\u05df."
+    # Flow mode: answer for flour includes "next" preview
+    HE_FLOUR = (
+        "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3"
+        " 1 \u05db\u05d5\u05e1 \u05e7\u05de\u05d7 \u05dc\u05d1\u05df."
     )
+    assert first_response.json()["answer"].startswith(HE_FLOUR)
 
     done_response = client.post(f"/session/{session_id}/ask", json={"text": HE_DONE})
     assert done_response.status_code == 200
-    assert (
-        done_response.json()["answer"]
-        == "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3 1 \u05db\u05d5\u05e1 \u05d7\u05dc\u05d1."
+    # Flow order: flour(0) -> sugar(1); sugar answer starts with sugar text
+    HE_SUGAR = (
+        "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3"
+        " 1 \u05db\u05e3 \u05e1\u05d5\u05db\u05e8 \u05dc\u05d1\u05df."
     )
+    assert done_response.json()["answer"].startswith(HE_SUGAR)
 
     second_response = client.post(f"/session/{session_id}/ask", json={"text": HE_WHAT_NOW})
     assert second_response.status_code == 200
-    assert (
-        second_response.json()["answer"]
-        == "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3 1 \u05db\u05d5\u05e1 \u05d7\u05dc\u05d1."
-    )
+    assert second_response.json()["answer"].startswith(HE_SUGAR)
     assert second_response.json()["session"]["current_item_index"] == 1
 
 
@@ -184,7 +202,11 @@ def test_all_supported_hebrew_completion_commands_advance_api_flow() -> None:
         "\u05e1\u05d9\u05d9\u05de\u05ea\u05d9",
     ]
 
-    expected_answer = "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3 1 \u05db\u05d5\u05e1 \u05d7\u05dc\u05d1."
+    # Flow order: flour(0) -> sugar(1). After one "done" we reach sugar.
+    HE_SUGAR = (
+        "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3"
+        " 1 \u05db\u05e3 \u05e1\u05d5\u05db\u05e8 \u05dc\u05d1\u05df."
+    )
 
     for command in completion_commands:
         session_id = _start_session(client, recipe_id)
@@ -192,9 +214,9 @@ def test_all_supported_hebrew_completion_commands_advance_api_flow() -> None:
 
         done_response = client.post(f"/session/{session_id}/ask", json={"text": command})
         assert done_response.status_code == 200
-        assert done_response.json()["answer"] == expected_answer
+        assert done_response.json()["answer"].startswith(HE_SUGAR)
         assert done_response.json()["session"]["current_item_index"] == 1
-        assert done_response.json()["session"]["current_phase"] == "ingredients"
+        assert done_response.json()["session"]["current_phase"] == "flow"
 
 
 def test_mushroom_pasta_guidance_is_localized_in_hebrew_and_english() -> None:
@@ -220,36 +242,46 @@ def test_completion_advances_ingredients_then_steps_then_next_section() -> None:
     recipe_id = client.get("/recipes").json()[0]["id"]
     session_id = _start_session(client, recipe_id)
 
+    # Batter flow: flour(0) -> sugar(1) -> milk(2) -> mix-step(3)
+    # Cooking flow: oil(0) -> heat-pan-step(1) -> pour-step(2)
+    HE_SUGAR = (
+        "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3"
+        " 1 \u05db\u05e3 \u05e1\u05d5\u05db\u05e8 \u05dc\u05d1\u05df."
+    )
+    HE_MILK = (
+        "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3"
+        " 1 \u05db\u05d5\u05e1 \u05d7\u05dc\u05d1."
+    )
+    HE_OIL = (
+        "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3"
+        " 1 \u05db\u05e3 \u05e9\u05de\u05df."
+    )
+
     first_done = client.post(f"/session/{session_id}/ask", json={"text": HE_DONE})
     assert first_done.status_code == 200
-    assert (
-        first_done.json()["answer"]
-        == "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3 1 \u05db\u05d5\u05e1 \u05d7\u05dc\u05d1."
-    )
+    # flour -> sugar (item 0 -> item 1)
+    assert first_done.json()["answer"].startswith(HE_SUGAR)
 
     second_done = client.post(f"/session/{session_id}/ask", json={"text": HE_DONE})
     assert second_done.status_code == 200
-    assert (
-        second_done.json()["answer"]
-        == "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3 1 \u05db\u05e3 \u05e1\u05d5\u05db\u05e8 \u05dc\u05d1\u05df."
-    )
+    # sugar -> milk (item 1 -> item 2)
+    assert second_done.json()["answer"].startswith(HE_MILK)
 
     third_done = client.post(f"/session/{session_id}/ask", json={"text": HE_DONE})
     assert third_done.status_code == 200
     third_payload = third_done.json()
+    # milk -> mix step (item 2 -> item 3, last in Batter; no preview)
     assert third_payload["answer"] == "Mix flour, sugar, and milk into a smooth batter."
-    assert third_payload["session"]["current_phase"] == "steps"
-    assert third_payload["session"]["current_item_index"] == 0
+    assert third_payload["session"]["current_phase"] == "flow"
+    assert third_payload["session"]["current_item_index"] == 3
 
     fourth_done = client.post(f"/session/{session_id}/ask", json={"text": HE_DONE})
     assert fourth_done.status_code == 200
     fourth_payload = fourth_done.json()
-    assert (
-        fourth_payload["answer"]
-        == "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3 1 \u05db\u05e3 \u05e9\u05de\u05df."
-    )
+    # mix step -> Cooking section, oil (item 0)
+    assert fourth_payload["answer"].startswith(HE_OIL)
     assert fourth_payload["session"]["current_section_index"] == 1
-    assert fourth_payload["session"]["current_phase"] == "ingredients"
+    assert fourth_payload["session"]["current_phase"] == "flow"
     assert fourth_payload["session"]["current_item_index"] == 0
 
 
@@ -449,7 +481,7 @@ def test_session_persists_across_repository_reload() -> None:
     reloaded_session = store.session_repository.get(session_id)
     assert reloaded_session is not None
     assert reloaded_session.current_item_index == 1
-    assert reloaded_session.current_phase == "ingredients"
+    assert reloaded_session.current_phase == "flow"
 
 
 def test_time_left_english_response_shape() -> None:
@@ -476,7 +508,12 @@ def test_command_routing_still_uses_deterministic_progression() -> None:
     response = client.post(f"/session/{session_id}/ask", json={"text": HE_DONE})
     assert response.status_code == 200
     payload = response.json()
-    assert payload["answer"] == "צריך להוסיף 1 כוס חלב."
+    # Flow order flour(0)->sugar(1); answer may include "next" preview
+    HE_SUGAR = (
+        "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3"
+        " 1 \u05db\u05e3 \u05e1\u05d5\u05db\u05e8 \u05dc\u05d1\u05df."
+    )
+    assert payload["answer"].startswith(HE_SUGAR)
     assert payload["session"]["current_item_index"] == 1
 
 
@@ -494,6 +531,7 @@ def test_main_ask_routes_english_recipe_question_to_grounded_rag_answer() -> Non
         == "You add the cream in the Sauce and Serving section, together with parmesan and black pepper."
     )
     assert payload["actions"] == []
+    # RAG answer does not advance the session; phase is still the initial value
     assert payload["session"]["current_phase"] == "ingredients"
     assert payload["session"]["current_item_index"] == 0
 

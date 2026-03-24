@@ -20,10 +20,20 @@ class Step(BaseModel):
     default_timer_seconds: int | None = None
 
 
+class FlowItem(BaseModel):
+    """One item in an interleaved execution sequence for a recipe section."""
+
+    type: str  # "ingredient" or "step"
+    index: int  # 0-based index into section.ingredients or section.steps
+
+
 class RecipeSection(BaseModel):
     name: str
     ingredients: list[Ingredient] = Field(default_factory=list)
     steps: list[Step] = Field(default_factory=list)
+    # Interleaved execution order. When set, the guided session follows
+    # this sequence instead of the classic ingredients-then-steps order.
+    execution_flow: list[FlowItem] | None = None
 
 
 class Recipe(BaseModel):

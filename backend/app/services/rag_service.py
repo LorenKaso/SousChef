@@ -95,6 +95,7 @@ class RagService:
         limit: int = 4,
         recipe_id: str | None = None,
         session_id: str | None = None,
+        flow_context: str | None = None,
     ) -> GroundedAnswer:
         retrieval = self.retrieve(
             query,
@@ -102,7 +103,9 @@ class RagService:
             recipe_id=recipe_id,
             session_id=session_id,
         )
-        llm_answer = self._try_llm_answer(query=query, retrieval=retrieval)
+        llm_answer = self._try_llm_answer(
+            query=query, retrieval=retrieval, flow_context=flow_context
+        )
         if llm_answer is not None:
             return llm_answer
         return self.answer_builder.build(query, retrieval)
@@ -115,6 +118,7 @@ class RagService:
         *,
         query: str,
         retrieval: RetrievalResponse,
+        flow_context: str | None = None,
     ) -> GroundedAnswer | None:
         llm_service = self.llm_service
         if llm_service is None:
@@ -127,6 +131,7 @@ class RagService:
             return llm_service.generate_grounded_answer(
                 question=query,
                 retrieval=retrieval,
+                flow_context=flow_context,
             )
         except Exception:
             return None

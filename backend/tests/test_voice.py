@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.db import init_db
 from app.main import app, seed_sample_recipe
 from app.models import DisplayLanguage
-from app.services.stt_service import STTService
+from app.services.stt_service import DEFAULT_STT_MODEL, STTService
 from app.services.tts_service import DEFAULT_TTS_MODEL, TTSService
 from app.store import store
 
@@ -179,7 +179,7 @@ def test_voice_session_start_creates_separate_voice_and_recipe_sessions() -> Non
     payload = response.json()
     assert payload["voice_session"]["state"] == "listening"
     assert payload["voice_session"]["recipe_session_id"] == payload["recipe_session"]["id"]
-    assert payload["voice_session"]["stt_model"] == "openai/whisper-large-v3-turbo"
+    assert payload["voice_session"]["stt_model"] == DEFAULT_STT_MODEL
     assert payload["voice_session"]["tts_model"] == "facebook/mms-tts-heb|facebook/mms-tts-eng"
 
 
@@ -281,7 +281,7 @@ def test_stt_transcript_text_shortcut_returns_repaired_text() -> None:
     )
 
     assert result.text == "\u05de\u05d4 \u05e2\u05db\u05e9\u05d9\u05d5?"
-    assert result.provider_model == "openai/whisper-large-v3-turbo"
+    assert result.provider_model == DEFAULT_STT_MODEL
     assert result.language == "he"
 
 

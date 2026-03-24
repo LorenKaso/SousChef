@@ -7,6 +7,7 @@ interface Props {
   favoriteIds?: Set<string>;
   onCardClick?: (recipe: Recipe) => void;
   onFavoriteToggle?: (recipe: Recipe) => void;
+  onDeleteRequest?: (recipe: Recipe) => void;
 }
 
 export default function RecipeGrid({
@@ -15,6 +16,7 @@ export default function RecipeGrid({
   favoriteIds,
   onCardClick,
   onFavoriteToggle,
+  onDeleteRequest,
 }: Props) {
   if (recipes.length === 0) {
     return (
@@ -25,7 +27,7 @@ export default function RecipeGrid({
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4">
       {recipes.map((recipe) => (
         <RecipeCard
           key={recipe.id}
@@ -34,6 +36,9 @@ export default function RecipeGrid({
           onClick={() => onCardClick?.(recipe)}
           onFavoriteToggle={
             onFavoriteToggle ? () => onFavoriteToggle(recipe) : undefined
+          }
+          onDeleteRequest={
+            onDeleteRequest ? () => onDeleteRequest(recipe) : undefined
           }
         />
       ))}

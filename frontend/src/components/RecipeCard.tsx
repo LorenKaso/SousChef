@@ -20,6 +20,7 @@ interface Props {
   isFavorited?: boolean;
   onClick?: () => void;
   onFavoriteToggle?: () => void;
+  onDeleteRequest?: () => void;
 }
 
 export default function RecipeCard({
@@ -27,6 +28,7 @@ export default function RecipeCard({
   isFavorited,
   onClick,
   onFavoriteToggle,
+  onDeleteRequest,
 }: Props) {
   const totalIngredients = recipe.sections.reduce(
     (sum, s) => sum + s.ingredients.length,
@@ -47,34 +49,49 @@ export default function RecipeCard({
       }}
       role="button"
       tabIndex={0}
-      className="group w-full text-left bg-white rounded-2xl border border-stone-100 shadow-sm overflow-hidden hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 transition-shadow duration-200 cursor-pointer"
+      className="group relative w-full text-left bg-white rounded-2xl border border-stone-100 shadow-sm overflow-hidden hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 transition-shadow duration-200 cursor-pointer aspect-square flex flex-col"
     >
       {/* Colour accent strip */}
-      <div className={`h-1.5 w-full ${accentForId(recipe.id)}`} />
+      <div className={`h-1.5 w-full shrink-0 ${accentForId(recipe.id)}`} />
 
-      <div className="p-4">
-        {/* Title row — heart sits beside the title when enabled */}
+      <div className="p-4 flex flex-col flex-1 min-h-0">
+        {/* Title row — heart + trash sit beside the title when enabled */}
         <div className="flex items-start justify-between gap-2">
-          <p className="font-semibold text-stone-800 text-base leading-snug line-clamp-2 group-hover:text-amber-600 transition-colors duration-150">
+          <p className="font-semibold text-stone-800 text-base leading-snug line-clamp-3 group-hover:text-amber-600 transition-colors duration-150">
             {recipe.title}
           </p>
 
-          {onFavoriteToggle !== undefined && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation(); // don't fire the card's navigation onClick
-                onFavoriteToggle();
-              }}
-              aria-label={isFavorited ? 'Remove from favorites' : 'Add to favorites'}
-              className={`shrink-0 text-lg leading-none transition-colors duration-150 ${
-                isFavorited
-                  ? 'text-rose-500 hover:text-rose-600'
-                  : 'text-stone-300 hover:text-rose-400'
-              }`}
-            >
-              {isFavorited ? '♥' : '♡'}
-            </button>
-          )}
+          <div className="flex items-center gap-1 shrink-0">
+            {onFavoriteToggle !== undefined && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFavoriteToggle();
+                }}
+                aria-label={isFavorited ? 'Remove from favorites' : 'Add to favorites'}
+                className={`text-2xl leading-none transition-colors duration-150 ${
+                  isFavorited
+                    ? 'text-rose-500 hover:text-rose-600'
+                    : 'text-stone-300 hover:text-rose-400'
+                }`}
+              >
+                {isFavorited ? '♥' : '♡'}
+              </button>
+            )}
+
+            {onDeleteRequest !== undefined && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteRequest();
+                }}
+                aria-label="Delete recipe"
+                className="grayscale opacity-30 hover:grayscale-0 hover:opacity-100 transition duration-150 leading-none text-base"
+              >
+                🗑
+              </button>
+            )}
+          </div>
         </div>
 
         <p className="mt-2 text-xs text-stone-400">

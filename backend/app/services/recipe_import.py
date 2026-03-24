@@ -186,7 +186,7 @@ def _parse_structured_sections(lines: list[str]) -> tuple[list[RecipeSection], l
             continue
 
         if in_ingredients:
-            current_ingredients.extend(_parse_ingredient_candidates(line))
+            current_ingredients.extend(_parse_ingredient_candidates(line, fallback=True))
             continue
         if in_steps:
             current_steps.extend(_parse_step_candidates(line))
@@ -242,11 +242,22 @@ def _build_steps(step_lines: list[str]) -> list[Step]:
     return [Step(index=index, text=text) for index, text in enumerate(step_lines, start=1)]
 
 
-def _parse_ingredient_candidates(line: str) -> list[Ingredient]:
+def _parse_ingredient_candidates(line: str, *, fallback: bool = False) -> list[Ingredient]:
     cleaned = _normalize_inline(_LEADING_BULLET_PATTERN.sub("", line))
     match = _AMOUNT_PATTERN.match(cleaned)
     if match is None:
-        return []
+        if (
+            not fallback
+            or not cleaned
+            or _looks_like_step(cleaned)
+            or _looks_like_heading(cleaned)
+        ):
+            return []
+        # Inside a known ingredients section: treat as a name-only ingredient.
+        name = cleaned.strip(" -,:;")
+        if not name:
+            return []
+        return [Ingredient(name=name, amount=1, unit="")]
 
     amount_text = match.group("amount")
     unit = (match.group("unit") or "").strip()

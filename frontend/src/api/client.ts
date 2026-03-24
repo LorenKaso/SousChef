@@ -3,9 +3,13 @@
 // Change BASE if the proxy config or deployment target changes.
 
 import type {
+  AskResponse,
   FavoriteEntry,
   ImportRecipeTextResponse,
   Recipe,
+  Session,
+  VoiceSessionStartResponse,
+  VoiceSessionTurnResponse,
 } from '../types/recipe';
 
 const BASE = '/api';
@@ -64,6 +68,75 @@ export async function addFavorite(recipeId: string): Promise<FavoriteEntry> {
 export async function removeFavorite(recipeId: string): Promise<void> {
   const res = await fetch(`${BASE}/recipes/${recipeId}/favorite`, {
     method: 'DELETE',
+  });
+  await handleResponse<unknown>(res);
+}
+
+export async function deleteRecipe(recipeId: string): Promise<void> {
+  const res = await fetch(`${BASE}/recipes/${recipeId}`, {
+    method: 'DELETE',
+  });
+  await handleResponse<unknown>(res);
+}
+
+// ── Cooking session ───────────────────────────────────────────────────────────
+
+export async function startSession(recipeId: string): Promise<Session> {
+  const res = await fetch(`${BASE}/session/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipe_id: recipeId }),
+  });
+  return handleResponse<Session>(res);
+}
+
+export async function askQuestion(
+  sessionId: string,
+  text: string,
+): Promise<AskResponse> {
+  const res = await fetch(`${BASE}/session/${sessionId}/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  return handleResponse<AskResponse>(res);
+}
+
+// ── Voice session ─────────────────────────────────────────────────────────────
+
+export async function startVoiceSession(
+  recipeId: string,
+): Promise<VoiceSessionStartResponse> {
+  const res = await fetch(`${BASE}/voice/session/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipe_id: recipeId }),
+  });
+  return handleResponse<VoiceSessionStartResponse>(res);
+}
+
+export async function sendVoiceTurn(
+  voiceSessionId: string,
+  payload: {
+    transcript_text?: string;
+    audio_base64?: string;
+    mime_type?: string;
+    language_hint?: 'en' | 'he';
+  },
+): Promise<VoiceSessionTurnResponse> {
+  const res = await fetch(`${BASE}/voice/session/${voiceSessionId}/turn`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<VoiceSessionTurnResponse>(res);
+}
+
+export async function stopVoiceSession(
+  voiceSessionId: string,
+): Promise<void> {
+  const res = await fetch(`${BASE}/voice/session/${voiceSessionId}/stop`, {
+    method: 'POST',
   });
   await handleResponse<unknown>(res);
 }

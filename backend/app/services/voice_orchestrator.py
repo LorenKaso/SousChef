@@ -12,6 +12,7 @@ from ..models import (
     VoiceSessionTurnResponse,
 )
 from ..text_utils import repair_text_if_mojibake
+from .llm_service import infer_execution_flows
 from .orchestrator import process_ask
 from .rag_service import RagService
 from .recipe_service import RecipeService
@@ -43,6 +44,25 @@ class VoiceOrchestrator:
         recipe = self.recipe_service.get_recipe(recipe_id)
         if recipe is None:
             raise HTTPException(status_code=404, detail="Recipe not found")
+
+        # Lazily enrich any section that lacks execution_flow using the LLM.
+        # This runs once per recipe; subsequent turns load the stored flow.
+        needs_flow = any(
+            s.execution_flow is None
+            and s.ingredients
+            and s.steps
+            for s in recipe.sections
+        )
+        if needs_flow:
+            llm_provider = (
+                self.rag_service.llm_service.provider
+                if self.rag_service and self.rag_service.llm_service
+                else None
+            )
+            enriched = infer_execution_flows(recipe, llm_provider)
+            if enriched is not recipe:
+                self.recipe_service.add_recipe(enriched)
+                recipe = enriched
 
         recipe_session = self.session_service.start_session(recipe_id)
         voice_session = self.voice_session_service.start_session(

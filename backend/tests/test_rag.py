@@ -484,8 +484,8 @@ def test_llm_prompt_builder_includes_question_context_and_grounding_rules() -> N
         answer_language="en",
     )
 
-    assert "Use only the provided context." in prompt
-    assert "Do not invent recipe details" in prompt
+    assert "Base your answer only on the recipe context below." in prompt
+    assert "Do not invent ingredients" in prompt
     assert "How much pasta is in the recipe?" in prompt
     assert "recipe-mushroom-cream-pasta" in prompt
     assert "400 g pasta" in prompt
@@ -550,8 +550,10 @@ def test_gemini_provider_generates_grounded_answer_with_safe_prompt() -> None:
     assert answer.answer_type == "llm_grounded"
     assert answer.answer == "Grounded answer from Gemini."
     assert client.models.calls
-    assert "Use only the provided context." in str(client.models.calls[0]["contents"])
-    assert "Answer strictly from the retrieved recipe chunks." in str(client.models.calls[0]["contents"])
+    assert "Base your answer only on the recipe context below." in str(
+        client.models.calls[0]["contents"]
+    )
+    assert "Do not invent ingredients" in str(client.models.calls[0]["contents"])
     assert client.models.calls[0]["model"] == "gemini-test-model"
     assert getattr(client.models.calls[0]["config"], "temperature") == 0.1
     assert getattr(client.models.calls[0]["config"], "max_output_tokens") == 220

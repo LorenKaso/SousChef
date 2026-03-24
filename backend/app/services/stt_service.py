@@ -11,7 +11,11 @@ from ..models import DisplayLanguage
 from ..text_utils import repair_text_if_mojibake
 
 
-DEFAULT_STT_MODEL = "openai/whisper-large-v3-turbo"
+# whisper-small: best speed/accuracy tradeoff on CPU for short multilingual commands.
+# Override with WHISPER_MODEL env var if needed, e.g.:
+#   WHISPER_MODEL=openai/whisper-large-v3-turbo  (slower on CPU, higher accuracy)
+#   WHISPER_MODEL=openai/whisper-base            (faster, weaker Hebrew)
+DEFAULT_STT_MODEL = os.getenv("WHISPER_MODEL", "openai/whisper-small")
 _DEFAULT_GENERATE_KWARGS = {
     "task": "transcribe",
 }

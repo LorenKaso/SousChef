@@ -20,6 +20,7 @@ from .models import (
     VoiceSessionTurnResponse,
 )
 from .services.convert import convert_recipe_normalized
+from .services.llm_service import infer_execution_flows
 from .services.orchestrator import process_ask
 from .services.recipe_import import import_recipe_from_text
 from .text_utils import repair_text_if_mojibake
@@ -27,6 +28,13 @@ from .store import store
 
 
 router = APIRouter()
+
+
+def _get_llm_provider():
+    """Return the configured LLM provider, or None if unavailable."""
+    if store.rag_service is None:
+        return None
+    return store.rag_service.llm_service.provider
 
 
 @router.get("/health")
@@ -42,7 +50,10 @@ def create_recipe(recipe: Recipe) -> Recipe:
 @router.post("/recipes/import/text", response_model=ImportRecipeTextResponse)
 def import_recipe_text(payload: ImportRecipeTextRequest) -> ImportRecipeTextResponse:
     imported = import_recipe_from_text(payload)
-    saved = store.add_recipe(imported.recipe)
+    # Enrich each section with an interleaved execution_flow when LLM is
+    # available. Falls back gracefully to classic mode on any failure.
+    enriched = infer_execution_flows(imported.recipe, _get_llm_provider())
+    saved = store.add_recipe(enriched)
     return ImportRecipeTextResponse(
         recipe=saved,
         confidence=imported.confidence,
@@ -61,6 +72,14 @@ def get_recipe(recipe_id: str) -> Recipe:
     if recipe is None:
         raise HTTPException(status_code=404, detail="Recipe not found")
     return recipe
+
+
+@router.delete("/recipes/{recipe_id}", status_code=200)
+def delete_recipe(recipe_id: str) -> dict:
+    deleted = store.recipe_service.delete_recipe(recipe_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    return {}
 
 
 @router.post("/recipes/{recipe_id}/convert", response_model=ConvertRecipeNormalizedResponse)

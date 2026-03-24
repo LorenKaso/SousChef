@@ -2,8 +2,19 @@
 import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
+from fractions import Fraction
 from math import ceil
-from ..models import Action, ActionType, Ingredient, PendingTimerProposal, Recipe, Session, Step, Timer
+from ..models import (
+    Action,
+    ActionType,
+    FlowItem,
+    Ingredient,
+    PendingTimerProposal,
+    Recipe,
+    Session,
+    Step,
+    Timer,
+)
 from .rag_service import RagService
 from .convert import convert_ingredient, convert_recipe
 from .conversion_catalog import catalog
@@ -15,24 +26,49 @@ _PREV_KEYWORDS = {"back", "prev", "previous", "אחורה", "חזור"}
 _WHAT_NOW_KEYWORDS = {"what now", "what's next", "מה עכשיו", "מה השלב הבא"}
 _TIME_LEFT_KEYWORDS = {"כמה זמן נשאר", "זמן נשאר", "time left", "how much time left"}
 _DISPLAY_QUERY_COMMANDS = {
+    # Show the current item without advancing — "remind me what I should do".
     "what now",
     "what now?",
     "what's next",
     "what's next?",
     "מה עכשיו",
-    "מה השלב הבא",
-    "שלב הבא",
-    }
+}
+# Every entry here advances the session by one item and reads the new current
+# item aloud.  Hebrew has two words for "step" (שלב / צעד) and STT output
+# varies, so both must be covered.  "הבא" / "קדימה" were previously defined
+# in the unused _NEXT_KEYWORDS set and are now wired in here.
 _COMPLETION_COMMANDS = {
+    # English — bare commands
     "done",
     "completed",
     "i added it",
     "i finished",
     "next",
     "next step",
+    "continue",
+    "go ahead",
+    # English — natural question forms that mean "advance to next"
+    "what is the next step",
+    "what is the next step?",
+    "what's the next step",
+    "what's the next step?",
+    "what should i do next",
+    "what should i do next?",
+    "what do i do next",
+    "what do i do next?",
+    # Hebrew — completion markers
     "שמתי",
     "הוספתי",
     "סיימתי",
+    # Hebrew — "next" navigation (שלב = stage, צעד = step)
+    "הבא",
+    "קדימה",
+    "השלב הבא",
+    "שלב הבא",
+    "מה השלב הבא",
+    "הצעד הבא",
+    "צעד הבא",
+    "מה הצעד הבא",
 }
 _HE_COMPLETION_PREFIXES = (
     "שמתי",
@@ -71,6 +107,13 @@ _EN_TIME_LEFT_PATTERN = re.compile(
 )
 _HE_CONFIRMATION_PATTERN = re.compile(
     r"^\s*(?:\u05db\u05df)(?:\s+\u05ea\u05e4\u05e2\u05d9\u05dc(?:\u05d9)?|\s+\u05d1\u05d1\u05e7\u05e9\u05d4)?[\!\.\?]*\s*$"
+)
+# Matches the wake-word prefix ("su", "sue", "so", or Hebrew equivalents) at the
+# start of a transcript, followed by punctuation and/or whitespace.  Stripping
+# this before command dispatch lets "so next step" reach "next step" matching.
+_WAKE_PREFIX_RE = re.compile(
+    r"^(?:su|sue|so|\u05e1\u05d5|\u05e9\u05d5)[,.\s]+",
+    re.IGNORECASE,
 )
 
 
@@ -176,6 +219,7 @@ def _build_ingredient_instruction(ingredient: Ingredient, lang: str) -> str:
 
 
 def _normalize_guided_progress(session: Session, recipe: Recipe) -> bool:
+    """Advance session past exhausted sections; return True when recipe is done."""
     while True:
         if session.current_section_index >= len(recipe.sections):
             session.current_phase = "steps"
@@ -183,15 +227,27 @@ def _normalize_guided_progress(session: Session, recipe: Recipe) -> bool:
             return True
 
         section = recipe.sections[session.current_section_index]
-        if session.current_phase == "ingredients":
+
+        if section.execution_flow is not None:
+            # Flow mode: follow the explicit interleaved sequence.
+            if session.current_phase != "flow":
+                session.current_phase = "flow"
+                session.current_item_index = 0
+            if session.current_item_index < len(section.execution_flow):
+                return False
+        elif session.current_phase == "ingredients":
+            # Classic mode: all ingredients first.
             if session.current_item_index < len(section.ingredients):
                 return False
             session.current_phase = "steps"
             session.current_item_index = 0
             continue
+        else:
+            # Classic mode: then all steps.
+            if session.current_item_index < len(section.steps):
+                return False
 
-        if session.current_item_index < len(section.steps):
-            return False
+        # Section exhausted — move to the next one.
         session.current_section_index += 1
         session.current_phase = "ingredients"
         session.current_item_index = 0
@@ -205,9 +261,45 @@ def _resolve_current_guided_item(
         return None
 
     section = recipe.sections[session.current_section_index]
+
+    if section.execution_flow is not None:
+        flow_item = section.execution_flow[session.current_item_index]
+        if flow_item.type == "ingredient":
+            return "ingredients", section.ingredients[flow_item.index]
+        return "steps", section.steps[flow_item.index]
+
+    # Classic mode.
     if session.current_phase == "ingredients":
         return "ingredients", section.ingredients[session.current_item_index]
     return "steps", section.steps[session.current_item_index]
+
+
+def _flow_item_text(
+    section,
+    flow_item: FlowItem,
+    lang: str,
+) -> str:
+    """Format a single flow item as a human-readable instruction."""
+    if flow_item.type == "ingredient":
+        return _build_ingredient_instruction(
+            section.ingredients[flow_item.index], lang
+        )
+    return section.steps[flow_item.index].text
+
+
+def _peek_next_flow_item_text(
+    session: Session, recipe: Recipe, lang: str
+) -> str | None:
+    """Return the next flow item text without mutating session state."""
+    if session.current_section_index >= len(recipe.sections):
+        return None
+    section = recipe.sections[session.current_section_index]
+    if section.execution_flow is None:
+        return None
+    next_index = session.current_item_index + 1
+    if next_index >= len(section.execution_flow):
+        return None
+    return _flow_item_text(section, section.execution_flow[next_index], lang)
 
 
 def _current_guided_answer(session: Session, recipe: Recipe, lang: str) -> str:
@@ -216,9 +308,22 @@ def _current_guided_answer(session: Session, recipe: Recipe, lang: str) -> str:
         return _build_completion_message(lang)
 
     phase, item = current_item
-    if phase == "ingredients":
-        return _build_ingredient_instruction(item, lang)
-    return item.text
+    answer = (
+        _build_ingredient_instruction(item, lang)
+        if phase == "ingredients"
+        else item.text
+    )
+
+    # In flow mode, append a preview of what comes next.
+    if session.current_phase == "flow":
+        next_text = _peek_next_flow_item_text(session, recipe, lang)
+        if next_text is not None:
+            if lang == "he":
+                answer += f" אחרי זה: {next_text}"
+            else:
+                answer += f" Next: {next_text}"
+
+    return answer
 
 
 def _advance_guided_progress(session: Session, recipe: Recipe, lang: str) -> str:
@@ -284,7 +389,17 @@ def _build_hebrew_reverse_conversion_answer(text: str) -> str | None:
 
 
 def _format_amount(value: float) -> str:
-    return f"{value:g}"
+    if value <= 0:
+        return f"{value:g}"
+    frac = Fraction(value).limit_denominator(16)
+    if abs(float(frac) - value) > 0.02:
+        return f"{value:g}"
+    whole = frac.numerator // frac.denominator
+    remainder = frac - whole
+    if remainder == 0:
+        return str(whole)
+    frac_str = f"{remainder.numerator}/{remainder.denominator}"
+    return f"{whole} {frac_str}" if whole > 0 else frac_str
 
 
 def _hebrew_unit_label(unit: str, amount: float) -> str:
@@ -626,6 +741,14 @@ def process_ask(
     lang = _detect_lang(text)
     actions: list[Action] = []
 
+    # Strip the assistant wake-word prefix ("Su, ", "So, " etc.) so that
+    # "Su, next step" dispatches correctly as "next step" and "Su, when do I
+    # add the eggs?" is recognised by both flow and RAG pattern matchers.
+    _stripped = _WAKE_PREFIX_RE.sub("", text).strip()
+    if _stripped:
+        text = _stripped
+        lowered = text.lower()
+
     conversion_answer = _build_hebrew_conversion_answer(text)
     if conversion_answer is not None:
         return conversion_answer, actions, session
@@ -821,9 +944,61 @@ def process_ask(
             answer = _current_guided_answer(session, recipe, lang)
         return answer, actions, session
 
-    if rag_service is not None and rag_service.supports_question(text):
-        grounded = rag_service.answer_question(text, session_id=session.id, use_llm=True)
+    if rag_service is not None:
+        flow_context = _build_flow_context_for_rag(session, recipe, lang)
+        grounded = rag_service.answer_question_with_llm(
+            text, session_id=session.id, flow_context=flow_context
+        )
         return grounded.answer, actions, session
 
     answer = _current_guided_answer(session, recipe, lang)
     return answer, actions, session
+
+
+def _build_flow_context_for_rag(
+    session: Session, recipe: Recipe, lang: str
+) -> str | None:
+    """Build a short cooking-position string injected into the LLM prompt."""
+    if session.current_section_index >= len(recipe.sections):
+        return None
+    section = recipe.sections[session.current_section_index]
+
+    if session.current_phase == "flow":
+        if section.execution_flow is None:
+            return None
+        idx = session.current_item_index
+        if idx >= len(section.execution_flow):
+            return None
+        flow_item = section.execution_flow[idx]
+        item_text = _flow_item_text(section, flow_item, lang)
+        if lang == "he":
+            return f"{item_text} (חלק: {section.name})"
+        return f"{item_text} (section: {section.name})"
+
+    if session.current_phase == "steps":
+        idx = session.current_item_index
+        if section.steps and idx < len(section.steps):
+            step = section.steps[idx]
+            if lang == "he":
+                return (
+                    f"שלב {step.index}: {step.text} (חלק: {section.name})"
+                )
+            return f"Step {step.index}: {step.text} (section: {section.name})"
+
+    if session.current_phase == "ingredients":
+        idx = session.current_item_index
+        if section.ingredients and idx < len(section.ingredients):
+            ing = section.ingredients[idx]
+            amount = _format_amount(ing.amount)
+            if lang == "he":
+                unit_text = _hebrew_unit_label(ing.unit, ing.amount)
+                return (
+                    f"מצרך נוכחי: {amount} {unit_text} {ing.name}"
+                    f" (חלק: {section.name})"
+                )
+            return (
+                f"Current ingredient: {amount} {ing.unit} {ing.name}"
+                f" (section: {section.name})"
+            )
+
+    return None

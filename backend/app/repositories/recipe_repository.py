@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from ..db import get_connection
-from ..models import Ingredient, Recipe, RecipeSection, Step
+from ..models import FlowItem, Ingredient, Recipe, RecipeSection, Step
 
 
 class RecipeRepository:
@@ -16,12 +17,23 @@ class RecipeRepository:
             connection.execute("DELETE FROM recipe_sections WHERE recipe_id = ?", (recipe.id,))
 
             for section_index, section in enumerate(recipe.sections):
+                flow_json: str | None = None
+                if section.execution_flow is not None:
+                    flow_json = json.dumps(
+                        {
+                            "execution_flow": [
+                                item.model_dump()
+                                for item in section.execution_flow
+                            ]
+                        }
+                    )
                 cursor = connection.execute(
                     """
-                    INSERT INTO recipe_sections (recipe_id, section_index, name, metadata_json)
-                    VALUES (?, ?, ?, NULL)
+                    INSERT INTO recipe_sections
+                        (recipe_id, section_index, name, metadata_json)
+                    VALUES (?, ?, ?, ?)
                     """,
-                    (recipe.id, section_index, section.name),
+                    (recipe.id, section_index, section.name, flow_json),
                 )
                 section_id = cursor.lastrowid
                 self._insert_section_contents(connection, recipe.id, section_id, section)
@@ -49,6 +61,14 @@ class RecipeRepository:
         with get_connection() as connection:
             row = connection.execute("SELECT 1 FROM recipes LIMIT 1").fetchone()
             return row is not None
+
+    def delete(self, recipe_id: str) -> bool:
+        """Delete one recipe. Returns True if found and deleted, False if not found."""
+        with get_connection() as connection:
+            cursor = connection.execute(
+                "DELETE FROM recipes WHERE id = ?", (recipe_id,)
+            )
+            return cursor.rowcount > 0
 
     def clear(self) -> None:
         with get_connection() as connection:
@@ -109,7 +129,7 @@ class RecipeRepository:
     ) -> Recipe:
         section_rows = connection.execute(
             """
-            SELECT id, name, section_index
+            SELECT id, name, section_index, metadata_json
             FROM recipe_sections
             WHERE recipe_id = ?
             ORDER BY section_index
@@ -138,11 +158,25 @@ class RecipeRepository:
                 (section_row["id"],),
             ).fetchall()
 
+            execution_flow = None
+            raw_meta = section_row["metadata_json"]
+            if raw_meta:
+                meta = json.loads(raw_meta)
+                flow_data = meta.get("execution_flow")
+                if flow_data:
+                    execution_flow = [
+                        FlowItem(**item) for item in flow_data
+                    ]
+
             sections.append(
                 RecipeSection(
                     name=section_row["name"],
                     ingredients=[
-                        Ingredient(name=row["name"], amount=row["amount"], unit=row["unit"])
+                        Ingredient(
+                            name=row["name"],
+                            amount=row["amount"],
+                            unit=row["unit"],
+                        )
                         for row in ingredient_rows
                     ],
                     steps=[
@@ -153,6 +187,7 @@ class RecipeRepository:
                         )
                         for row in step_rows
                     ],
+                    execution_flow=execution_flow,
                 )
             )
 
