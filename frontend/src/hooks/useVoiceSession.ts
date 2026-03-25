@@ -4,20 +4,15 @@
  * Always-listening, wake-word-activated voice loop for the cooking mode.
  *
  * Runtime loop:
- *   passive  → (hear "Su")  → capturing
- *   capturing→ (silence/timeout) → sending
- *   sending  → (backend ok) → speaking
- *   sending  → (422/503)    → speaking  (retry prompt via speechSynthesis)
- *   speaking → (audio ended) → passive
+ *   passive (idle)          → hear "Su" → speak "כן/Yes" → passive (active window)
+ *   passive (active window) → SR final result → sending
+ *   sending                 → (backend ok) → speaking
+ *   sending                 → (422/503)    → speaking (retry prompt)
+ *   speaking                → (audio ended) → passive (active window)
+ *   [30 s inactivity]       → passive (idle, wake word required again)
  *
- * All STT, flow/RAG/LLM routing, and TTS happen in the backend.
- * This hook only: listens for the wake word, captures audio, ships it,
- * plays the WAV response, and loops.
- *
- * The microphone stream is opened ONCE when the session becomes active and
- * kept open for the whole session.  This eliminates the async getUserMedia
- * latency that previously cut off the start of commands spoken immediately
- * after the wake word.
+ * All commands travel as SR transcript text — no audio capture or Whisper
+ * inference.  The backend handles routing, RAG, and TTS generation.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -43,37 +38,22 @@ interface Options {
   active: boolean;
   isHebrew: boolean;
   onSessionUpdate: (session: Session) => void;
+  /** Called when the backend returns 404 or 409 — the session no longer exists. */
+  onSessionInvalid?: () => void;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-// "Su" is an English wake word — use en-US for reliable recognition.
-// Variants: "su", "sue" (common mishear), and the Hebrew samech/shin forms
-// in case the user switches recognition language later.
-const WAKE_WORD_RE = /^(su|sue|so|סו|שו)\b/i;
+// Wake-word / assistant-name detection.
+// Matches the short forms ("Su", "So") and the full assistant name ("SousChef",
+// "Sous Chef", "Sous-Chef") so all natural invocation styles trigger capture.
+// The backend independently strips the same prefixes from the Whisper transcript
+// before routing, so neither the detection word nor any variant ever reaches
+// the question-routing logic.
+const WAKE_WORD_RE = /^(sous[\s\-]?chef|su|sue|so|סו|שו)\b/i;
 
-const SILENCE_THRESHOLD_RMS = 8;
-const SILENCE_DURATION_MS   = 700;  // was 1500 — reduces dead-wait on every turn
-const MIN_VOICE_MS          = 300;
-const MAX_CAPTURE_MS        = 6000;
-const MIN_BLOB_BYTES        = 500;
-
-// ── MIME type ─────────────────────────────────────────────────────────────────
-
-function pickMimeType(): string {
-  if (typeof MediaRecorder === 'undefined') return '';
-  for (const t of [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/ogg;codecs=opus',
-    'audio/ogg',
-  ]) {
-    if (MediaRecorder.isTypeSupported(t)) return t;
-  }
-  return '';
-}
-
-const RECORDER_MIME = pickMimeType();
+/** After wake-word activation, any speech triggers a turn for this long. */
+const ACTIVE_WINDOW_MS = 30_000;
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
@@ -82,8 +62,10 @@ export function useVoiceSession({
   active,
   isHebrew,
   onSessionUpdate,
-}: Options): { voiceState: VoiceState; debug: VoiceDebugInfo } {
+  onSessionInvalid,
+}: Options): { voiceState: VoiceState; debug: VoiceDebugInfo; isActiveWindow: boolean } {
   const [voiceState, setVoiceState] = useState<VoiceState>('off');
+  const [isActiveWindow, setIsActiveWindow] = useState(false);
   const [debug, setDebug] = useState<VoiceDebugInfo>({
     srSupported: null,
     lastTranscript: '',
@@ -96,6 +78,9 @@ export function useVoiceSession({
   const onSessionUpdateRef = useRef(onSessionUpdate);
   onSessionUpdateRef.current = onSessionUpdate;
 
+  const onSessionInvalidRef = useRef(onSessionInvalid);
+  onSessionInvalidRef.current = onSessionInvalid;
+
   const isHebrewRef = useRef(isHebrew);
   isHebrewRef.current = isHebrew;
 
@@ -106,23 +91,50 @@ export function useVoiceSession({
   useEffect(() => {
     if (!voiceSessionId || !active) {
       setVoiceState('off');
+      setIsActiveWindow(false);
       return;
     }
 
     const vsId = voiceSessionId;
+    console.log(`[voice] session active — voiceSessionId=${vsId}`);
 
     // ── Mutable runtime state ───────────────────────────────────────────────
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let recognition: any = null;
-    let recorder: MediaRecorder | null = null;
-    // Single mic stream opened once for the whole session lifetime.
-    let micStream: MediaStream | null = null;
-    let audioCtx: AudioContext | null = null;
-    let vadTimer: ReturnType<typeof setTimeout> | null = null;
-    let captureHardTimeout: ReturnType<typeof setTimeout> | null = null;
     let blobUrl: string | null = null;
     let stateValue: VoiceState = 'passive';
     let destroyed = false;
+
+    // ── Active-window state ─────────────────────────────────────────────────
+    // True when the user has recently used the wake word and any speech should
+    // trigger capture without requiring the wake word again.
+    let inActiveWindow = false;
+    let activeWindowTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function updateActiveWindow(val: boolean) {
+      inActiveWindow = val;
+      setIsActiveWindow(val);
+    }
+
+    function clearActiveWindowTimer() {
+      if (activeWindowTimer !== null) {
+        clearTimeout(activeWindowTimer);
+        activeWindowTimer = null;
+      }
+    }
+
+    function scheduleActiveWindowTimeout() {
+      clearActiveWindowTimer();
+      activeWindowTimer = setTimeout(() => {
+        activeWindowTimer = null;
+        if (!destroyed) {
+          console.log('[voice] active window timed out — reverting to idle (wake word required)');
+          updateActiveWindow(false);
+          teardownRecognition();
+          startPassive();
+        }
+      }, ACTIVE_WINDOW_MS);
+    }
 
     function setState(s: VoiceState) {
       if (destroyed) return;
@@ -141,17 +153,6 @@ export function useVoiceSession({
       if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
     }
 
-    function stopMic() {
-      micStream?.getTracks().forEach(t => t.stop());
-      micStream = null;
-    }
-
-    function stopVAD() {
-      if (vadTimer !== null)           { clearTimeout(vadTimer);           vadTimer = null; }
-      if (captureHardTimeout !== null) { clearTimeout(captureHardTimeout); captureHardTimeout = null; }
-      if (audioCtx)                    { audioCtx.close();                 audioCtx = null; }
-    }
-
     function teardownRecognition() {
       if (!recognition) return;
       recognition.onresult = null;
@@ -163,15 +164,31 @@ export function useVoiceSession({
 
     function fullCleanup() {
       destroyed = true;
+      clearActiveWindowTimer();
       teardownRecognition();
-      stopVAD();
-      if (recorder && recorder.state !== 'inactive') {
-        try { recorder.stop(); } catch { /* ignored */ }
-      }
-      recorder = null;
-      stopMic();
       revokeBlobUrl();
       window.speechSynthesis?.cancel();
+    }
+
+    // ── Wake-word confirmation ───────────────────────────────────────────────
+    // Plays a short "כן"/"Yes" via browser TTS so the user knows the wake word
+    // was heard, then re-enters passive mode in active-window mode.  This
+    // replaces the old startCapture() call so that the first post-wake-word
+    // command also goes through the SR-text path instead of Whisper.
+
+    function speakWakeConfirmation() {
+      if (destroyed) return;
+      setState('speaking');
+      if (!('speechSynthesis' in window)) { startPassive(); return; }
+      window.speechSynthesis.cancel();
+      const msg = isHebrewRef.current ? 'כן' : 'Yes';
+      const utt = new SpeechSynthesisUtterance(msg);
+      utt.lang   = isHebrewRef.current ? 'he-IL' : 'en-US';
+      utt.volume = 0.8;
+      utt.rate   = 1.5;
+      utt.onend   = () => { if (!destroyed) startPassive(); };
+      utt.onerror = () => { if (!destroyed) startPassive(); };
+      window.speechSynthesis.speak(utt);
     }
 
     // ── Retry prompt ────────────────────────────────────────────────────────
@@ -210,43 +227,21 @@ export function useVoiceSession({
       }
     }
 
-    // ── Send captured audio ─────────────────────────────────────────────────
+    // ── Send SR text directly (active-window turns) ──────────────────────────
+    // In active-window mode the browser's SR already has the full transcript.
+    // Sending it as transcript_text bypasses Whisper (which hallucinated on the
+    // short, partially-captured audio that previously reached it).
 
-    async function sendTurn(blob: Blob, mimeType: string) {
-      if (destroyed || stateValue !== 'capturing') return;
-
-      const t0 = Date.now();
-      console.log(`[voice] capture stopped — blob ${blob.size}B, mime ${mimeType}`);
-
-      if (blob.size < MIN_BLOB_BYTES) {
-        patchDebug({ lastError: `Blob too small (${blob.size} bytes) — discarded` });
-        startPassive();
-        return;
-      }
-
+    async function sendTranscriptAsTurn(text: string) {
+      if (destroyed) return;
+      clearActiveWindowTimer(); // suspend timeout while turn is in flight
       setState('sending');
 
-      let audio_base64: string;
       try {
-        audio_base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload  = () => resolve((reader.result as string).split(',')[1]);
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
+        const res = await sendVoiceTurn(vsId, {
+          transcript_text: text,
+          language_hint: isHebrewRef.current ? 'he' : 'en',
         });
-      } catch {
-        patchDebug({ lastError: 'FileReader failed encoding audio' });
-        startPassive();
-        return;
-      }
-
-      const t1 = Date.now();
-      console.log(`[voice] encoded in ${t1 - t0}ms — sending request`);
-
-      try {
-        const res = await sendVoiceTurn(vsId, { audio_base64, mime_type: mimeType });
-        const t2 = Date.now();
-        console.log(`[voice] response received in ${t2 - t1}ms (total from stop: ${t2 - t0}ms)`);
         if (destroyed) return;
         patchDebug({
           lastError: null,
@@ -255,85 +250,20 @@ export function useVoiceSession({
         });
         onSessionUpdateRef.current(res.recipe_session);
         playResponse(res.audio_base64, res.audio_content_type);
-        console.log(`[voice] playback started at +${Date.now() - t0}ms`);
       } catch (err: unknown) {
         if (destroyed) return;
         const msg = err instanceof Error ? err.message : String(err);
-        console.log(`[voice] request failed at +${Date.now() - t0}ms: ${msg}`);
         patchDebug({ lastError: `sendVoiceTurn failed: ${msg}` });
         if (msg.includes('422') || msg.includes('503')) {
           speakRetry();
+        } else if (msg.includes('404') || msg.includes('409')) {
+          console.log(`[voice] FATAL: session invalid (${msg}) — stopping hook`);
+          setState('off');
+          onSessionInvalidRef.current?.();
         } else {
           startPassive();
         }
       }
-    }
-
-    // ── Capture phase ───────────────────────────────────────────────────────
-    // micStream is already open — no async getUserMedia needed here.
-
-    function startCapture() {
-      if (destroyed) return;
-      setState('capturing');
-      teardownRecognition();
-
-      if (!micStream) {
-        patchDebug({ lastError: 'Mic stream not available' });
-        startPassive();
-        return;
-      }
-
-      const chunks: Blob[] = [];
-      const mimeType = RECORDER_MIME;
-      recorder = new MediaRecorder(micStream, mimeType ? { mimeType } : undefined);
-
-      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-
-      recorder.onstop = () => {
-        stopVAD();
-        // Keep micStream open — it is shared for the whole session lifetime.
-        if (!destroyed && stateValue === 'capturing') {
-          const finalBlob = new Blob(chunks, { type: mimeType || 'audio/webm' });
-          sendTurn(finalBlob, mimeType || 'audio/webm');
-        }
-      };
-
-      audioCtx = new AudioContext();
-      const source   = audioCtx.createMediaStreamSource(micStream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      const data = new Uint8Array(analyser.frequencyBinCount);
-
-      let hadVoice    = false;
-      let voiceStart  = 0;
-      let silenceStart = Date.now();
-
-      function checkVAD() {
-        if (destroyed || stateValue !== 'capturing') return;
-        analyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (const v of data) { const n = (v - 128) / 128; sum += n * n; }
-        const rms = Math.sqrt(sum / data.length) * 100;
-
-        if (rms > SILENCE_THRESHOLD_RMS) {
-          if (!hadVoice) { hadVoice = true; voiceStart = Date.now(); }
-          silenceStart = Date.now();
-        } else if (hadVoice && (Date.now() - voiceStart) > MIN_VOICE_MS) {
-          if ((Date.now() - silenceStart) > SILENCE_DURATION_MS) {
-            if (recorder && recorder.state === 'recording') recorder.stop();
-            return;
-          }
-        }
-        vadTimer = setTimeout(checkVAD, 100);
-      }
-
-      captureHardTimeout = setTimeout(() => {
-        if (recorder && recorder.state === 'recording') recorder.stop();
-      }, MAX_CAPTURE_MS);
-
-      recorder.start(100);
-      checkVAD();
     }
 
     // ── Passive listening ───────────────────────────────────────────────────
@@ -349,6 +279,9 @@ export function useVoiceSession({
           srSupported: false,
           lastError: 'SpeechRecognition not available in this browser',
         });
+        // If SR is unavailable while in the active window, drop back to idle
+        // so we don't schedule a timeout that can never be cleared.
+        if (inActiveWindow) updateActiveWindow(false);
         return;
       }
       patchDebug({ srSupported: true, lastError: null });
@@ -359,10 +292,13 @@ export function useVoiceSession({
       const rec: any = new SR();
       rec.continuous     = true;
       rec.interimResults = true;
-      // FIX: use en-US so Chrome reliably transcribes the English wake word "Su".
-      // The actual command audio is captured separately and sent to backend Whisper
-      // which auto-detects Hebrew / English.
-      rec.lang = 'en-US';
+      // Active window + Hebrew: use he-IL so the browser recognises Hebrew speech.
+      // Idle (wake-word) mode: always en-US so Chrome reliably hears "Su/SousChef".
+      // The command audio captured by MediaRecorder goes to backend Whisper regardless.
+      rec.lang = (inActiveWindow && isHebrewRef.current) ? 'he-IL' : 'en-US';
+
+      // Reset the inactivity clock each time we re-enter passive while active.
+      if (inActiveWindow) scheduleActiveWindowTimeout();
 
       let explicitlyStopped = false;
 
@@ -371,14 +307,41 @@ export function useVoiceSession({
         if (destroyed || stateValue !== 'passive') return;
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript.trim();
-          const matched = WAKE_WORD_RE.test(transcript);
-          // Always surface the transcript in the debug panel.
-          patchDebug({ lastTranscript: transcript, wakeMatched: matched });
-          if (matched) {
-            explicitlyStopped = true;
-            rec.stop();
-            startCapture();
-            return;
+
+          if (inActiveWindow) {
+            // Active window: wait for SR's FINAL result so we have the full
+            // utterance, then send it as text directly.  Using interim results
+            // (previous behaviour) caused MediaRecorder to start after most of
+            // the speech was already over, leaving Whisper with near-silence
+            // which it hallucinated as "Thank you very much."
+            if (event.results[i].isFinal && transcript.length >= 1) {
+              patchDebug({ lastTranscript: transcript, wakeMatched: true });
+              console.log(`[voice] active window final: "${transcript}" — sending as text`);
+              explicitlyStopped = true;
+              rec.stop();
+              sendTranscriptAsTurn(transcript);
+              return;
+            }
+            // Show interim transcript in debug without triggering a turn.
+            if (transcript.length >= 1) {
+              patchDebug({ lastTranscript: transcript });
+            }
+          } else {
+            // Idle: require the wake word before capturing.
+            const matched = WAKE_WORD_RE.test(transcript);
+            patchDebug({ lastTranscript: transcript, wakeMatched: matched });
+            if (matched) {
+              console.log(`[voice] wake word matched ("${transcript}") — entering active window`);
+              updateActiveWindow(true);
+              explicitlyStopped = true;
+              rec.stop();
+              // Play a short confirmation then re-enter passive in active-window
+              // mode.  This ensures the first post-wake-word command also goes
+              // through the SR-text path (same as subsequent turns) instead of
+              // the old startCapture() → Whisper path that caused hallucinations.
+              speakWakeConfirmation();
+              return;
+            }
           }
         }
       };
@@ -416,26 +379,12 @@ export function useVoiceSession({
       }
     }
 
-    // ── Startup: open mic once, then enter passive mode ─────────────────────
+    // ── Startup ──────────────────────────────────────────────────────────────
+    // SpeechRecognition manages its own mic permission — just enter passive.
 
-    async function init() {
-      try {
-        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'getUserMedia failed';
-        patchDebug({
-          srSupported: false,
-          lastError: `Mic access denied: ${msg}`,
-        });
-        setState('off');
-        return;
-      }
-      if (!destroyed) startPassive();
-    }
-
-    init();
+    startPassive();
     return fullCleanup;
   }, [voiceSessionId, active]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { voiceState, debug };
+  return { voiceState, debug, isActiveWindow };
 }

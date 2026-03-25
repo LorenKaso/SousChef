@@ -7,7 +7,7 @@ import RecipeDetailPage from './pages/RecipeDetailPage';
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-stone-50">
+      <div className="min-h-screen bg-[#FAF8F4]">
         <Navbar />
         <Routes>
           <Route path="/" element={<AllRecipesPage />} />

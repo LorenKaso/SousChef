@@ -682,3 +682,210 @@ def test_main_ask_falls_back_safely_when_llm_provider_fails() -> None:
         == "You add the cream in the Sauce and Serving section, together with parmesan and black pepper."
     )
     assert payload["actions"] == []
+
+
+def test_wake_prefix_stripped_before_routing() -> None:
+    """Assistant-name / wake-word prefixes must be transparent to question routing.
+
+    "SousChef, what now"       → same as "what now"       → reads current item, no advance
+    "So, next step"            → same as "next step"       → advances one item
+    "סושף, מה עכשיו"           → same as "מה עכשיו"        → reads current item, no advance
+    "סו, השלב הבא"             → same as "השלב הבא"        → advances one item
+    "Sous Chef, what now"      → same as "what now"        → reads current item, no advance
+
+    Answer language follows _detect_lang on the post-strip text: English
+    inputs produce English answers; Hebrew inputs produce Hebrew answers.
+    """
+    # Hebrew flour / sugar — used when input text contains Hebrew chars.
+    HE_FLOUR = (
+        "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3"
+        " 1 \u05db\u05d5\u05e1 \u05e7\u05de\u05d7 \u05dc\u05d1\u05df."
+    )
+    HE_SUGAR = (
+        "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3"
+        " 1 \u05db\u05e3 \u05e1\u05d5\u05db\u05e8 \u05dc\u05d1\u05df."
+    )
+    client = TestClient(app)
+    recipe_id = client.get("/recipes").json()[0]["id"]
+
+    # ── "SousChef, what now" — English input → English answer ────────────────
+    session_id = _start_session(client, recipe_id)
+    r = client.post(f"/session/{session_id}/ask", json={"text": "SousChef, what now"})
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith("Add 1 cup of flour.")
+    assert r.json()["session"]["current_item_index"] == 0
+
+    # ── "So, next step" — English input → English answer, advances ───────────
+    session_id = _start_session(client, recipe_id)
+    client.post(f"/session/{session_id}/ask", json={"text": HE_WHAT_NOW})
+    r = client.post(f"/session/{session_id}/ask", json={"text": "So, next step"})
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith("Add 1 tbsp of sugar.")
+    assert r.json()["session"]["current_item_index"] == 1
+
+    # ── "סושף, מה עכשיו" — Hebrew input → Hebrew answer, no advance ──────────
+    session_id = _start_session(client, recipe_id)
+    r = client.post(
+        f"/session/{session_id}/ask",
+        json={"text": "\u05e1\u05d5\u05e9\u05e3, \u05de\u05d4 \u05e2\u05db\u05e9\u05d9\u05d5"},
+    )
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith(HE_FLOUR)
+    assert r.json()["session"]["current_item_index"] == 0
+
+    # ── "סו, השלב הבא" — Hebrew input → Hebrew answer, advances ─────────────
+    session_id = _start_session(client, recipe_id)
+    client.post(f"/session/{session_id}/ask", json={"text": HE_WHAT_NOW})
+    r = client.post(
+        f"/session/{session_id}/ask",
+        json={"text": "\u05e1\u05d5, \u05d4\u05e9\u05dc\u05d1 \u05d4\u05d1\u05d0"},
+    )
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith(HE_SUGAR)
+    assert r.json()["session"]["current_item_index"] == 1
+
+    # ── "Sous Chef, what now" — English input → English answer ───────────────
+    session_id = _start_session(client, recipe_id)
+    r = client.post(f"/session/{session_id}/ask", json={"text": "Sous Chef, what now"})
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith("Add 1 cup of flour.")
+    assert r.json()["session"]["current_item_index"] == 0
+
+
+def test_filler_words_do_not_block_navigation_commands() -> None:
+    """STT often prepends or appends filler tokens to navigation commands.
+
+    All inputs are English so answers come back in English.
+
+    "ok next step"       → same as "next step"    → advances one item
+    "next, step"         → same as "next step"    → advances one item  (comma)
+    "please what now"    → same as "what now"     → reads without advancing
+    "what now please"    → same as "what now"     → reads without advancing
+    "uh what's next"     → same as "what's next"  → reads without advancing
+    """
+    client = TestClient(app)
+    recipe_id = client.get("/recipes").json()[0]["id"]
+
+    EN_FLOUR = "Add 1 cup of flour."
+    EN_SUGAR = "Add 1 tbsp of sugar."
+
+    # ── "ok next step" → advances ────────────────────────────────────────────
+    session_id = _start_session(client, recipe_id)
+    client.post(f"/session/{session_id}/ask", json={"text": "what now"})
+    r = client.post(f"/session/{session_id}/ask", json={"text": "ok next step"})
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith(EN_SUGAR)
+    assert r.json()["session"]["current_item_index"] == 1
+
+    # ── "next, step" (STT comma) → advances ──────────────────────────────────
+    session_id = _start_session(client, recipe_id)
+    client.post(f"/session/{session_id}/ask", json={"text": "what now"})
+    r = client.post(f"/session/{session_id}/ask", json={"text": "next, step"})
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith(EN_SUGAR)
+    assert r.json()["session"]["current_item_index"] == 1
+
+    # ── "please what now" → reads without advancing ───────────────────────────
+    session_id = _start_session(client, recipe_id)
+    r = client.post(f"/session/{session_id}/ask", json={"text": "please what now"})
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith(EN_FLOUR)
+    assert r.json()["session"]["current_item_index"] == 0
+
+    # ── "what now please" → reads without advancing ───────────────────────────
+    session_id = _start_session(client, recipe_id)
+    r = client.post(f"/session/{session_id}/ask", json={"text": "what now please"})
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith(EN_FLOUR)
+    assert r.json()["session"]["current_item_index"] == 0
+
+    # ── "uh what's next" → reads without advancing ───────────────────────────
+    session_id = _start_session(client, recipe_id)
+    r = client.post(f"/session/{session_id}/ask", json={"text": "uh what's next"})
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith(EN_FLOUR)
+    assert r.json()["session"]["current_item_index"] == 0
+
+
+def test_hebrew_ingredient_mention_validates_against_current_item() -> None:
+    """'שמתי X' must advance only when X matches the current guided item.
+
+    - "שמתי קמח" when at flour  → advance (flour is current) ✓
+    - "שמתי סוכר" when at flour → redirect back to flour     ✗
+    - "שמתי" bare               → advance unconditionally    ✓ (no ingredient)
+    """
+    client = TestClient(app)
+    recipe_id = client.get("/recipes").json()[0]["id"]
+
+    HE_FLOUR = (
+        "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3"
+        " 1 \u05db\u05d5\u05e1 \u05e7\u05de\u05d7 \u05dc\u05d1\u05df."
+    )
+    HE_SUGAR = (
+        "\u05e6\u05e8\u05d9\u05da \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3"
+        " 1 \u05db\u05e3 \u05e1\u05d5\u05db\u05e8 \u05dc\u05d1\u05df."
+    )
+
+    # ── correct ingredient → advance to sugar ─────────────────────────────────
+    session_id = _start_session(client, recipe_id)
+    r = client.post(
+        f"/session/{session_id}/ask",
+        # "שמתי קמח" — I added flour
+        json={"text": "\u05e9\u05de\u05ea\u05d9 \u05e7\u05de\u05d7"},
+    )
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith(HE_SUGAR)
+    assert r.json()["session"]["current_item_index"] == 1
+
+    # ── wrong ingredient → redirect back to flour ─────────────────────────────
+    session_id = _start_session(client, recipe_id)
+    r = client.post(
+        f"/session/{session_id}/ask",
+        # "שמתי סוכר" — I added sugar (but current is flour)
+        json={"text": "\u05e9\u05de\u05ea\u05d9 \u05e1\u05d5\u05db\u05e8"},
+    )
+    assert r.status_code == 200
+    # Answer should redirect to flour, not advance to sugar
+    assert r.json()["answer"].endswith(HE_FLOUR) or HE_FLOUR in r.json()["answer"]
+    assert r.json()["session"]["current_item_index"] == 0
+
+    # ── bare "שמתי" (no ingredient named) → advance unconditionally ──────────
+    session_id = _start_session(client, recipe_id)
+    r = client.post(
+        f"/session/{session_id}/ask",
+        json={"text": HE_DONE},
+    )
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith(HE_SUGAR)
+    assert r.json()["session"]["current_item_index"] == 1
+
+
+def test_english_i_added_advances_when_ingredient_matches() -> None:
+    """'I added X' (English) must validate against the current guided item.
+
+    - "I added flour" when at flour → advance
+    - "I added sugar" when at flour → redirect back to flour
+    - "I added it"                  → advance unconditionally (no recipe ingredient)
+    """
+    client = TestClient(app)
+    recipe_id = client.get("/recipes").json()[0]["id"]
+
+    # ── "I added flour" when at flour → advance to sugar ──────────────────────
+    session_id = _start_session(client, recipe_id)
+    r = client.post(f"/session/{session_id}/ask", json={"text": "I added flour"})
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith("Add 1 tbsp of sugar.")
+    assert r.json()["session"]["current_item_index"] == 1
+
+    # ── "I added sugar" when at flour → redirect ──────────────────────────────
+    session_id = _start_session(client, recipe_id)
+    r = client.post(f"/session/{session_id}/ask", json={"text": "I added sugar"})
+    assert r.status_code == 200
+    assert r.json()["answer"].startswith("Not yet") or "Add 1 cup of flour" in r.json()["answer"]
+    assert r.json()["session"]["current_item_index"] == 0
+
+    # ── "I added it" → "it" is not a recipe ingredient → advance via fallback ─
+    session_id = _start_session(client, recipe_id)
+    r = client.post(f"/session/{session_id}/ask", json={"text": "I added it"})
+    assert r.status_code == 200
+    assert r.json()["session"]["current_item_index"] == 1

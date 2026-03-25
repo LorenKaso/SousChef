@@ -3,11 +3,13 @@ import type { Recipe } from '../types/recipe';
 // A small deterministic palette — each recipe gets a consistent accent colour
 // based on a simple hash of its id.
 const ACCENTS = [
-  'bg-amber-400',
+  'bg-emerald-500',
   'bg-rose-400',
-  'bg-emerald-400',
-  'bg-sky-400',
+  'bg-amber-400',
+  'bg-sky-500',
   'bg-violet-400',
+  'bg-teal-500',
+  'bg-orange-400',
 ] as const;
 
 function accentForId(id: string): string {
@@ -40,7 +42,6 @@ export default function RecipeCard({
   );
 
   // Outer wrapper is a div so that the heart <button> inside is valid HTML.
-  // Same visual appearance as before — cursor-pointer + focus ring preserved.
   return (
     <div
       onClick={onClick}
@@ -49,7 +50,7 @@ export default function RecipeCard({
       }}
       role="button"
       tabIndex={0}
-      className="group relative w-full text-left bg-white rounded-2xl border border-stone-100 shadow-sm overflow-hidden hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 transition-shadow duration-200 cursor-pointer aspect-square flex flex-col"
+      className="group relative w-full text-left bg-white rounded-2xl border border-stone-100 shadow-sm overflow-hidden hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-green-500 transition-all duration-200 cursor-pointer aspect-square flex flex-col"
     >
       {/* Colour accent strip */}
       <div className={`h-1.5 w-full shrink-0 ${accentForId(recipe.id)}`} />
@@ -57,7 +58,7 @@ export default function RecipeCard({
       <div className="p-4 flex flex-col flex-1 min-h-0">
         {/* Title row — heart + trash sit beside the title when enabled */}
         <div className="flex items-start justify-between gap-2">
-          <p className="font-semibold text-stone-800 text-base leading-snug line-clamp-3 group-hover:text-amber-600 transition-colors duration-150">
+          <p className="font-bold text-stone-800 text-base leading-snug line-clamp-3 group-hover:text-green-700 transition-colors duration-150">
             {recipe.title}
           </p>
 
@@ -86,7 +87,7 @@ export default function RecipeCard({
                   onDeleteRequest();
                 }}
                 aria-label="Delete recipe"
-                className="grayscale opacity-30 hover:grayscale-0 hover:opacity-100 transition duration-150 leading-none text-base"
+                className="grayscale opacity-30 hover:grayscale-0 hover:opacity-100 transition duration-150 leading-none text-lg"
               >
                 🗑
               </button>
@@ -94,7 +95,7 @@ export default function RecipeCard({
           </div>
         </div>
 
-        <p className="mt-2 text-xs text-stone-400">
+        <p className="mt-2 text-xs text-stone-400 font-medium">
           {recipe.servings} serving{recipe.servings !== 1 ? 's' : ''}&ensp;·&ensp;
           {totalIngredients} ingredient{totalIngredients !== 1 ? 's' : ''}&ensp;·&ensp;
           {totalSteps} step{totalSteps !== 1 ? 's' : ''}

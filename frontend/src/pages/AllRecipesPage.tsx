@@ -94,7 +94,7 @@ export default function AllRecipesPage() {
       {/* Page header */}
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-stone-800">All Recipes</h1>
+          <h1 className="text-2xl font-extrabold text-stone-800">All Recipes</h1>
           {!loading && !error && (
             <p className="text-sm text-stone-400 mt-0.5">
               {recipes.length} recipe{recipes.length !== 1 ? 's' : ''}
@@ -105,7 +105,7 @@ export default function AllRecipesPage() {
         {/* Add Recipe button */}
         <button
           onClick={() => setModalOpen(true)}
-          className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-amber-500 hover:bg-amber-600 rounded-xl shadow-sm transition-colors"
+          className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-green-700 hover:bg-green-800 rounded-xl shadow-sm transition-colors"
           aria-label="Add a new recipe"
         >
           <span className="text-lg leading-none font-light">+</span>

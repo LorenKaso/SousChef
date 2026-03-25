@@ -62,7 +62,7 @@ export default function FavoritesPage() {
     <main className="max-w-5xl mx-auto px-6 py-8">
       {/* Page header */}
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-stone-800">Favorites</h1>
+        <h1 className="text-2xl font-extrabold text-stone-800">Favorites</h1>
         {!loading && !error && (
           <p className="text-sm text-stone-400 mt-0.5">
             {recipes.length} saved recipe{recipes.length !== 1 ? 's' : ''}

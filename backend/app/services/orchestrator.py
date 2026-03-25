@@ -75,6 +75,15 @@ _HE_COMPLETION_PREFIXES = (
     "הוספתי",
     "סיימתי",
 )
+# Filler tokens that STT commonly inserts around navigation commands.
+# Used by _core_navigation_text to strip "ok next step" → "next step".
+_NAV_FILLER_TOKENS = frozenset({
+    # English
+    "ok", "okay", "alright", "sure", "please", "um", "uh", "well", "right", "yeah",
+    # Hebrew
+    "\u05d1\u05d1\u05e7\u05e9\u05d4",  # בבקשה (please)
+    "\u05d0\u05d4",                      # אה (um/ah)
+})
 _HE_CUP_TO_GRAMS_PATTERN = re.compile(
     r"^\s*\u05db\u05de\u05d4\s+\u05d6\u05d4"
     r"(?:\s+(\d+(?:\.\d+)?))?\s+(\u05db\u05d5\u05e1(?:\u05d5\u05ea)?)\s+(.+?)\s+"
@@ -108,11 +117,29 @@ _EN_TIME_LEFT_PATTERN = re.compile(
 _HE_CONFIRMATION_PATTERN = re.compile(
     r"^\s*(?:\u05db\u05df)(?:\s+\u05ea\u05e4\u05e2\u05d9\u05dc(?:\u05d9)?|\s+\u05d1\u05d1\u05e7\u05e9\u05d4)?[\!\.\?]*\s*$"
 )
-# Matches the wake-word prefix ("su", "sue", "so", or Hebrew equivalents) at the
-# start of a transcript, followed by punctuation and/or whitespace.  Stripping
-# this before command dispatch lets "so next step" reach "next step" matching.
+# Matches English "I added <ingredient>" or "I've added <ingredient>".
+# Applied to the normalized (lowercased, NFKC) text produced by
+# _normalize_command_text so apostrophe variants are already canonical.
+_EN_I_ADDED_PATTERN = re.compile(
+    r"^i(?:'ve)?\s+added\s+(?:the\s+)?(.+)$",
+    re.IGNORECASE,
+)
+# Matches the wake-word / assistant-name prefix at the start of a transcript,
+# followed by punctuation and/or whitespace.  Stripping this before command
+# dispatch ensures that "SousChef, next step", "So next step", "סושף הבא"
+# and "סו, מה עכשיו" all reach the correct routing layer.
+#
+# Ordering rule: longer alternatives are listed before shorter ones.
+# "sous chef" must come before "su/so", and "סושף" (full Hebrew name) must
+# come before "סו" (short prefix), because regex alternation is left-to-right
+# and a two-letter prefix that happens to be a valid start of the longer name
+# must not short-circuit the match.
+#
+# "סושף" = samech(ס) vav(ו) shin(ש) pe-sofit(ף) — the standard Hebrew
+# transliteration of "SousChef".  The optional [\s\-]? inside also covers the
+# spaced form "סו שף" and the hyphenated form "סו-שף".
 _WAKE_PREFIX_RE = re.compile(
-    r"^(?:su|sue|so|\u05e1\u05d5|\u05e9\u05d5)[,.\s]+",
+    r"^(?:sous[\s\-]?chef|\u05e1\u05d5[\s\-]?\u05e9\u05e3|su|sue|so|\u05e1\u05d5|\u05e9\u05d5)[,.\s]+",
     re.IGNORECASE,
 )
 
@@ -147,19 +174,57 @@ def _normalize_command_text(text: str) -> str:
     return normalized.strip()
 
 
+def _core_navigation_text(normalized: str) -> str:
+    """Strip internal commas and leading/trailing filler tokens.
+
+    Used only for navigation intent detection — not for parsers that need
+    punctuation (conversion patterns, timer labels, etc.).
+
+    Examples:
+        "ok next step"  → "next step"
+        "next, step"    → "next step"
+        "please what now" → "what now"
+        "מה עכשיו בבקשה"  → "מה עכשיו"
+    """
+    # Remove commas — STT inserts them at natural pauses ("next, step").
+    scrubbed = normalized.replace(",", " ")
+    scrubbed = re.sub(r"\s+", " ", scrubbed).strip()
+    tokens = scrubbed.split()
+    while tokens and tokens[0] in _NAV_FILLER_TOKENS:
+        tokens.pop(0)
+    while tokens and tokens[-1] in _NAV_FILLER_TOKENS:
+        tokens.pop()
+    return " ".join(tokens)
+
+
 def _is_display_query_command(text: str) -> bool:
-    return _normalize_command_text(text) in _DISPLAY_QUERY_COMMANDS
+    normalized = _normalize_command_text(text)
+    if normalized in _DISPLAY_QUERY_COMMANDS:
+        return True
+    core = _core_navigation_text(normalized)
+    return bool(core) and core != normalized and core in _DISPLAY_QUERY_COMMANDS
 
 
 def _is_completion_command(text: str) -> bool:
     normalized = _normalize_command_text(text)
     if normalized in _COMPLETION_COMMANDS:
         return True
-
-    return any(
+    if any(
         normalized == prefix or normalized.startswith(f"{prefix} ")
         for prefix in _HE_COMPLETION_PREFIXES
-    )
+    ):
+        return True
+    # Re-check after stripping fillers and internal commas.
+    core = _core_navigation_text(normalized)
+    if core and core != normalized:
+        if core in _COMPLETION_COMMANDS:
+            return True
+        if any(
+            core == prefix or core.startswith(f"{prefix} ")
+            for prefix in _HE_COMPLETION_PREFIXES
+        ):
+            return True
+    return False
 
 
 def _build_completion_message(lang: str) -> str:
@@ -552,6 +617,80 @@ def _build_hebrew_progression_answer(text: str, recipe: Recipe, current_step: in
     return "\u05de\u05e6\u05d5\u05d9\u05df. \u05d0\u05e4\u05e9\u05e8 \u05dc\u05e2\u05d1\u05d5\u05e8 \u05dc\u05e9\u05dc\u05d1 \u05d4\u05d1\u05d0."
 
 
+def _extract_raw_ingredient_mention(text: str, lang: str) -> str | None:
+    """Return the bare ingredient name from an 'I added X' / 'שמתי X' phrase.
+
+    Operates on the ORIGINAL text (not pre-normalised) so it can apply the
+    appropriate language pattern.  Returns None when the text is not an
+    ingredient-mention statement.
+    """
+    if lang == "he":
+        normalized = _normalize_command_text(text)
+        match = _HE_INGREDIENT_PROGRESS_PATTERN.match(normalized)
+        if match is not None:
+            return _clean_ingredient_query(match.group(1))
+    else:
+        normalized = _normalize_command_text(text)
+        match = _EN_I_ADDED_PATTERN.match(normalized)
+        if match is not None:
+            return match.group(1).strip()
+    return None
+
+
+def _handle_ingredient_mention(
+    text: str,
+    session: Session,
+    recipe: Recipe,
+    lang: str,
+) -> str | None:
+    """Validate an 'I added X' / 'שמתי X' statement against the current item.
+
+    If X names a recipe ingredient and the session is in the ingredient phase:
+    - Correct ingredient → advance and return the next item.
+    - Wrong ingredient  → return a corrective instruction.
+
+    Returns None when the text is not an ingredient mention, the ingredient
+    is not in this recipe, or the current item is a step (not an ingredient).
+    The caller must continue with normal routing in the None case.
+    """
+    raw_name = _extract_raw_ingredient_mention(text, lang)
+    if raw_name is None:
+        return None
+
+    # Only intercept when the mentioned name resolves to a recipe ingredient.
+    matched = _find_recipe_ingredient(recipe, raw_name)
+    if matched is None:
+        return None
+
+    current_item = _resolve_current_guided_item(session, recipe)
+    if current_item is None:
+        # Recipe already complete — fall through to the completion message.
+        return None
+
+    phase, item = current_item
+    if phase != "ingredients" or not isinstance(item, Ingredient):
+        # Current item is a step; don't validate ingredient mentions here.
+        return None
+
+    # Compare via catalog key first, then by normalised name.
+    mentioned_key = _ingredient_key_for_text(matched.name)
+    current_key = _ingredient_key_for_text(item.name)
+    is_match = (
+        (mentioned_key is not None and mentioned_key == current_key)
+        or item.name.strip().lower() == matched.name.strip().lower()
+    )
+
+    if is_match:
+        session.current_item_index += 1
+        return _current_guided_answer(session, recipe, lang)
+
+    # Wrong ingredient — guide the user back to the expected one.
+    instruction = _build_ingredient_instruction(item, lang)
+    if lang == "he":
+        return f"\u05e7\u05d5\u05d3\u05dd: {instruction}"
+    return f"Not yet \u2014 first: {instruction}"
+
+
 def _detect_hebrew_recipe_conversion_target(text: str) -> str | None:
     cleaned = text.strip()
     if "\u05de\u05ea\u05db\u05d5\u05df" not in cleaned:
@@ -801,6 +940,13 @@ def process_ask(
         answer = _build_timer_started_answer(timer_label, formatted, lang)
         return answer, actions, session
 
+    # ── Ingredient-mention progression (must precede display/completion) ──────
+    # "שמתי קמח" / "I added flour": advance only when the named ingredient
+    # matches the current guided item; redirect to the correct item otherwise.
+    ingredient_answer = _handle_ingredient_mention(text, session, recipe, lang)
+    if ingredient_answer is not None:
+        return ingredient_answer, actions, session
+
     if _is_display_query_command(text):
         answer = _current_guided_answer(session, recipe, lang)
         return answer, actions, session
@@ -946,8 +1092,11 @@ def process_ask(
 
     if rag_service is not None:
         flow_context = _build_flow_context_for_rag(session, recipe, lang)
+        # Pass recipe_id explicitly so the vector-store search is always scoped
+        # to the active recipe, even if the second session-store lookup inside
+        # rag_service._build_context cannot resolve the recipe from session_id.
         grounded = rag_service.answer_question_with_llm(
-            text, session_id=session.id, flow_context=flow_context
+            text, recipe_id=recipe.id, session_id=session.id, flow_context=flow_context
         )
         return grounded.answer, actions, session
 

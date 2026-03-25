@@ -100,7 +100,7 @@ export default function AddRecipeModal({ isOpen, onClose, onRecipeAdded }: Props
             placeholder="Paste a recipe here — ingredients, steps, title… the more detail the better."
             rows={10}
             disabled={loading}
-            className="w-full px-3 py-2.5 text-sm text-stone-800 bg-stone-50 border border-stone-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent placeholder:text-stone-400 disabled:opacity-60"
+            className="w-full px-3 py-2.5 text-sm text-stone-800 bg-stone-50 border border-stone-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent placeholder:text-stone-400 disabled:opacity-60"
           />
 
           {error && (
@@ -122,7 +122,7 @@ export default function AddRecipeModal({ isOpen, onClose, onRecipeAdded }: Props
             <button
               type="submit"
               disabled={loading || !text.trim()}
-              className="px-5 py-2 text-sm font-semibold text-white bg-amber-500 hover:bg-amber-600 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-5 py-2 text-sm font-semibold text-white bg-green-700 hover:bg-green-800 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? 'Adding…' : 'Add Recipe'}
             </button>
