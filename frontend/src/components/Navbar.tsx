@@ -11,13 +11,21 @@ export default function Navbar() {
 
   return (
     <header className="bg-white border-b border-stone-200 sticky top-0 z-10 shadow-sm">
-      <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
+      <div className="max-w-5xl mx-auto px-6 h-20 flex items-center justify-between">
         {/* Brand */}
-        <div className="flex items-center gap-2.5 select-none">
-          <span className="text-2xl leading-none">👨‍🍳</span>
-          <div className="flex flex-col leading-none">
-            <span className="font-extrabold text-lg text-green-700 tracking-tight">SousChef</span>
-            <span className="text-[10px] font-medium text-stone-400 tracking-widest uppercase">Hands-Free Cooking</span>
+        <div className="flex items-center gap-2 select-none">
+          {/* Icon — primary visual anchor */}
+          <img
+            src="/icon.png"
+            alt="SousChef logo"
+            className="h-[72px] w-[72px] object-contain drop-shadow-lg flex-shrink-0"
+          />
+          {/* Wordmark — secondary */}
+          <div className="flex flex-col justify-center gap-0.5 leading-none">
+            <span className="font-semibold text-base text-green-700 tracking-tight">SousChef</span>
+            <span className="text-[9px] font-medium text-stone-400 tracking-[0.18em] uppercase">
+              Hands-Free Cooking
+            </span>
           </div>
         </div>
 

@@ -14,3 +14,4 @@ backend/test_*.db
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+.claude/
